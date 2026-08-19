@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend } from 'recharts';
-import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, FileSpreadsheet, Users, ChevronRight, LogOut } from 'lucide-react';
+import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, LogOut } from 'lucide-react';
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
 
@@ -35,7 +35,6 @@ function useSupabaseData(session) {
   const [sessions, setSessions] = useState([]);
   const [panels, setPanels] = useState([]);
   const [panelBatches, setPanelBatches] = useState([]);
-  const [sheetBatches, setSheetBatches] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -43,24 +42,22 @@ function useSupabaseData(session) {
   const loadAll = async () => {
     setLoading(true); setError(null);
     try {
-      const [s, b, r, se, p, pb, sb, pr] = await Promise.all([
+      const [s, b, r, se, p, pb, pr] = await Promise.all([
         supabase.from('skus').select('*'),
         supabase.from('batches').select('*'),
         supabase.from('retention_checkpoints').select('*'),
         supabase.from('sessions').select('*'),
         supabase.from('panels').select('*'),
         supabase.from('panel_batches').select('*'),
-        supabase.from('sheet_batches').select('*'),
         supabase.from('profiles').select('*'),
       ]);
       if (s.error) throw s.error;
       setSkus(s.data || []);
-      setBatches(b.data || []);
+      setBatches((b.data || []).sort((a, b2) => Number(b2.batch_number) - Number(a.batch_number)));
       setRetention(r.data || []);
       setSessions(se.data || []);
       setPanels(p.data || []);
       setPanelBatches(pb.data || []);
-      setSheetBatches((sb.data || []).sort((a, b2) => Number(b2.batch_number) - Number(a.batch_number)));
       setProfiles(pr.data || []);
     } catch (e) {
       setError(e.message || 'Failed to load data.');
@@ -106,33 +103,42 @@ function useSupabaseData(session) {
     return data.id;
   };
 
-  // Ensures a batch (and SKU) exists for a sheet row; returns batch id. Used by Panels.
-  const ensureBatchFromSheetRow = async (row) => {
-    const existing = batches.find(b => b.batch_number === row.batch_number);
-    if (existing) return existing.id;
+  // Imports batches directly from parsed sheet rows: creates any missing
+  // SKUs, creates/updates batches, sets up retention checkpoints. Used by
+  // the Batches tab importer. Returns a summary of what happened.
+  const importBatches = async (rows) => {
+    let added = 0, skipped = 0;
+    for (const row of rows) {
+      const existing = batches.find(b => b.batch_number === row.batchNumber);
+      if (existing) { skipped++; continue; }
 
-    let sku = skus.find(s => s.name.toLowerCase() === row.sku_name.toLowerCase());
-    if (!sku) {
-      const { data: newSku, error: skuErr } = await supabase.from('skus').insert({
-        name: row.sku_name, style: '', abv: 0, descriptors: [], watchouts: [],
-        target: { appearance: 3, aroma: 3, flavor: 3, mouthfeel: 3, finish: 3 }, tolerance: 1,
-        notes: 'Auto-created from the Batch Log sheet — set a real target profile.',
+      let sku = skus.find(s => s.name.toLowerCase() === row.skuName.toLowerCase());
+      if (!sku) {
+        const { data: newSku, error: skuErr } = await supabase.from('skus').insert({
+          name: row.skuName, style: '', abv: 0, descriptors: [], watchouts: [],
+          target: { appearance: 3, aroma: 3, flavor: 3, mouthfeel: 3, finish: 3 }, tolerance: 1,
+          notes: 'Auto-created from a sheet import — set a real target profile.',
+        }).select().single();
+        if (skuErr) throw skuErr;
+        sku = newSku;
+        skus.push(sku); // keep local lookup current within this loop
+      }
+
+      const packageDate = row.packagedDate || todayISO();
+      const { data: newBatch, error: batchErr } = await supabase.from('batches').insert({
+        sku_id: sku.id, batch_number: row.batchNumber, package_date: packageDate, format: 'Can',
       }).select().single();
-      if (skuErr) throw skuErr;
-      sku = newSku;
+      if (batchErr) throw batchErr;
+      batches.push(newBatch);
+
+      const checkpoints = RETENTION_INTERVALS.map(days => ({
+        batch_id: newBatch.id, days, due_date: addDays(packageDate, days), assessed: false,
+      }));
+      await supabase.from('retention_checkpoints').insert(checkpoints);
+      added++;
     }
-
-    const packageDate = row.packaged_date || todayISO();
-    const { data: newBatch, error: batchErr } = await supabase.from('batches').insert({
-      sku_id: sku.id, batch_number: row.batch_number, package_date: packageDate, format: 'Can',
-    }).select().single();
-    if (batchErr) throw batchErr;
-
-    const checkpoints = RETENTION_INTERVALS.map(days => ({
-      batch_id: newBatch.id, days, due_date: addDays(packageDate, days), assessed: false,
-    }));
-    await supabase.from('retention_checkpoints').insert(checkpoints);
-    return newBatch.id;
+    await loadAll();
+    return { added, skipped };
   };
 
   const addSession = async (sess) => {
@@ -148,34 +154,17 @@ function useSupabaseData(session) {
     await loadAll();
   };
 
-  const createPanel = async ({ date, label, batchNumbers }) => {
-    const batchIds = [];
-    for (const bn of batchNumbers) {
-      const row = sheetBatches.find(r => r.batch_number === bn);
-      if (!row) continue;
-      const id = await ensureBatchFromSheetRow(row);
-      batchIds.push(id);
-    }
+  const createPanel = async ({ date, label, batchIds }) => {
     const { data: panel, error } = await supabase.from('panels').insert({ date, label }).select().single();
     if (error) throw error;
     await supabase.from('panel_batches').insert(batchIds.map(bid => ({ panel_id: panel.id, batch_id: bid })));
     await loadAll();
   };
 
-  const refreshSheetBatches = async (rows) => {
-    await supabase.from('sheet_batches').delete().neq('batch_number', '__none__');
-    if (rows.length > 0) {
-      await supabase.from('sheet_batches').insert(rows.map(r => ({
-        batch_number: r.batchNumber, sku_name: r.skuName, date_brewed: r.dateBrewed || null, packaged_date: r.packagedDate || null,
-      })));
-    }
-    await loadAll();
-  };
-
   return {
-    skus, batches, retention, sessions, panels, panelBatches, sheetBatches, profiles, profileName,
+    skus, batches, retention, sessions, panels, panelBatches, profiles, profileName,
     loading, error, reload: loadAll,
-    addSku, updateSku, addBatch, addSession, createPanel, refreshSheetBatches,
+    addSku, updateSku, addBatch, addSession, createPanel, importBatches,
   };
 }
 
@@ -461,72 +450,20 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
 // ============================================================
 // Panels
 // ============================================================
-function RefreshSheetModal({ store, onClose }) {
-  const [rawText, setRawText] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const doRefresh = async () => {
-    const parsed = Papa.parse(rawText.trim(), { header: true, skipEmptyLines: true });
-    if (parsed.errors.length && parsed.data.length === 0) {
-      setError('Could not parse that. Make sure you copied the header row along with the data.');
-      return;
-    }
-    const rows = parsed.data
-      .map(r => ({
-        batchNumber: (r['Batch Number'] || '').trim(),
-        skuName: (r['SKU Name'] || '').trim(),
-        dateBrewed: (r['Date Brewed'] || '').trim(),
-        packagedDate: (r['Packaged Date'] || r['Package Date'] || '').trim(),
-      }))
-      .filter(r => r.batchNumber && /^\d+$/.test(r.batchNumber) && r.skuName);
-    setBusy(true);
-    try {
-      await store.refreshSheetBatches(rows);
-      onClose();
-    } catch (e) {
-      setError(e.message || 'Could not save.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 20 }}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: 24, width: 560 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-          <h3 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 18 }}>Refresh batch list</h3>
-          <X size={18} style={{ cursor: 'pointer', color: 'var(--text-muted)' }} onClick={onClose} />
-        </div>
-        <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 14px' }}>Paste the current Batch Log rows (including header) from your sheet.</p>
-        <textarea style={{ ...inputStyle, minHeight: 160, fontFamily: 'var(--font-mono)', fontSize: 12 }}
-          placeholder={'Batch Number\tSKU Name\tDate Brewed\tPackaged Date\n363\tKolsch\t2026-06-16\t2026-07-06'}
-          value={rawText} onChange={e => setRawText(e.target.value)} />
-        {error && <p style={{ color: 'var(--bad)', fontSize: 12.5, marginTop: 8 }}>{error}</p>}
-        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-          <Button onClick={doRefresh} disabled={!rawText.trim() || busy}>{busy ? 'Saving…' : 'Update list'}</Button>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
   const [building, setBuilding] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [label, setLabel] = useState('');
   const [date, setDate] = useState(todayISO());
   const [selected, setSelected] = useState([]);
   const [busy, setBusy] = useState(false);
 
-  const toggleSelect = (bn) => setSelected(prev => prev.includes(bn) ? prev.filter(b => b !== bn) : [...prev, bn]);
+  const toggleSelect = (id) => setSelected(prev => prev.includes(id) ? prev.filter(b => b !== id) : [...prev, id]);
 
   const create = async () => {
     if (selected.length === 0) return;
     setBusy(true);
     try {
-      await store.createPanel({ date, label: label || `Panel — ${date}`, batchNumbers: selected });
+      await store.createPanel({ date, label: label || `Panel — ${date}`, batchIds: selected });
       setBuilding(false); setLabel(''); setSelected([]);
     } finally {
       setBusy(false);
@@ -549,16 +486,8 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Sensory panels</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>{isLead ? 'Build a panel by picking which batches need tasting.' : 'Work through your assigned panel one batch at a time.'}</p>
         </div>
-        {isLead && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button variant="ghost" onClick={() => setRefreshing(true)}><Upload size={15} /> Refresh batch list</Button>
-            <Button onClick={() => setBuilding(v => !v)}><Plus size={15} /> Build panel</Button>
-          </div>
-        )}
+        {isLead && <Button onClick={() => setBuilding(v => !v)}><Plus size={15} /> Build panel</Button>}
       </div>
-
-      {refreshing && <RefreshSheetModal store={store} onClose={() => setRefreshing(false)} />}
-      {isLead && <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: '-12px 0 20px' }}>{store.sheetBatches.length} batches available in the list</p>}
 
       {building && (
         <Card style={{ marginBottom: 20 }}>
@@ -567,15 +496,18 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
             <Field label="Label (optional)"><input style={inputStyle} value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Tuesday panel" /></Field>
           </div>
           <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Select batches ({selected.length} chosen)</p>
-          {store.sheetBatches.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>No batches loaded yet — click "Refresh batch list" above first.</p>}
+          {store.batches.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>No batches yet — add some on the Batches tab first.</p>}
           <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 14 }}>
-            {store.sheetBatches.map(row => (
-              <label key={row.batch_number} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', background: selected.includes(row.batch_number) ? 'var(--surface-2)' : 'transparent' }}>
-                <input type="checkbox" checked={selected.includes(row.batch_number)} onChange={() => toggleSelect(row.batch_number)} />
-                <span style={{ fontSize: 13.5 }}><strong>{row.batch_number}</strong> — {row.sku_name}</span>
-                {row.packaged_date && <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>packaged {row.packaged_date}</span>}
-              </label>
-            ))}
+            {store.batches.map(b => {
+              const sku = store.skus.find(s => s.id === b.sku_id);
+              return (
+                <label key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', background: selected.includes(b.id) ? 'var(--surface-2)' : 'transparent' }}>
+                  <input type="checkbox" checked={selected.includes(b.id)} onChange={() => toggleSelect(b.id)} />
+                  <span style={{ fontSize: 13.5 }}><strong>{b.batch_number}</strong> — {sku ? sku.name : 'Unknown SKU'}</span>
+                  {b.package_date && <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>packaged {b.package_date}</span>}
+                </label>
+              );
+            })}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <Button onClick={create} disabled={selected.length === 0 || busy}>{busy ? 'Creating…' : `Create panel with ${selected.length} batch${selected.length !== 1 ? 'es' : ''}`}</Button>
@@ -676,8 +608,75 @@ function RetentionQueue({ store, onLogTasting }) {
 // ============================================================
 // Batches
 // ============================================================
+function ImportBatchesModal({ store, onClose }) {
+  const [rawText, setRawText] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const doImport = async () => {
+    const parsed = Papa.parse(rawText.trim(), { header: true, skipEmptyLines: true });
+    if (parsed.errors.length && parsed.data.length === 0) {
+      setError('Could not parse that. Make sure you copied the header row along with the data.');
+      return;
+    }
+    const rows = parsed.data
+      .map(r => ({
+        batchNumber: (r['Batch Number'] || '').trim(),
+        skuName: (r['SKU Name'] || '').trim(),
+        dateBrewed: (r['Date Brewed'] || '').trim(),
+        packagedDate: (r['Packaged Date'] || r['Package Date'] || '').trim(),
+      }))
+      .filter(r => r.batchNumber && /^\d+$/.test(r.batchNumber) && r.skuName);
+    setBusy(true); setError('');
+    try {
+      const summary = await store.importBatches(rows);
+      setResult(summary);
+    } catch (e) {
+      setError(e.message || 'Could not import.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 20 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: 24, width: 560 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <h3 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 18 }}>Import batches from a sheet</h3>
+          <X size={18} style={{ cursor: 'pointer', color: 'var(--text-muted)' }} onClick={onClose} />
+        </div>
+
+        {result ? (
+          <div style={{ padding: '12px 0' }}>
+            <p style={{ fontSize: 14, marginBottom: 6 }}>Import complete.</p>
+            <ul style={{ fontSize: 13.5, color: 'var(--text-muted)', lineHeight: 1.8 }}>
+              <li><strong style={{ color: 'var(--text)' }}>{result.added}</strong> batches added (new SKUs auto-created where needed — check their TTT profiles)</li>
+              {result.skipped > 0 && <li><strong style={{ color: 'var(--text)' }}>{result.skipped}</strong> skipped — batch number already exists</li>}
+            </ul>
+            <Button onClick={onClose} style={{ marginTop: 8 }}>Done</Button>
+          </div>
+        ) : (
+          <>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 14px' }}>Paste your Batch Log rows (including the header row): Batch Number, SKU Name, Date Brewed, Packaged Date.</p>
+            <textarea style={{ ...inputStyle, minHeight: 160, fontFamily: 'var(--font-mono)', fontSize: 12 }}
+              placeholder={'Batch Number\tSKU Name\tDate Brewed\tPackaged Date\n363\tKolsch\t2026-06-16\t2026-07-06'}
+              value={rawText} onChange={e => setRawText(e.target.value)} />
+            {error && <p style={{ color: 'var(--bad)', fontSize: 12.5, marginTop: 8 }}>{error}</p>}
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <Button onClick={doImport} disabled={!rawText.trim() || busy}>{busy ? 'Importing…' : 'Import'}</Button>
+              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BatchesView({ store, isLead }) {
   const [showNew, setShowNew] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [form, setForm] = useState({ skuId: '', batchNumber: '', packageDate: todayISO(), format: 'Can' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -705,8 +704,15 @@ function BatchesView({ store, isLead }) {
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Batches</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>Packaged batches and their tasting history.</p>
         </div>
-        {isLead && <Button onClick={() => setShowNew(v => !v)}><Plus size={15} /> New batch</Button>}
+        {isLead && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button variant="ghost" onClick={() => setShowImport(true)}><Upload size={15} /> Import from sheet</Button>
+            <Button onClick={() => setShowNew(v => !v)}><Plus size={15} /> New batch</Button>
+          </div>
+        )}
       </div>
+
+      {showImport && <ImportBatchesModal store={store} onClose={() => setShowImport(false)} />}
 
       {showNew && (
         <Card style={{ marginBottom: 20 }}>
