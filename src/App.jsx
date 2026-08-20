@@ -1259,10 +1259,11 @@ function TrendsView({ store }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {recent.map(s => {
               const b = store.batches.find(x => x.id === s.batch_id);
+              const bSku = b ? store.skus.find(x => x.id === b.sku_id) : null;
               return (
                 <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
                   <div>
-                    <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{b ? b.batch_number : '—'}</p>
+                    <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{b ? `${b.batch_number} - ${bSku ? bSku.name : 'Unknown SKU'}` : '—'}</p>
                     <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>{store.profileName(s.taster_id)} · {s.date}</p>
                   </div>
                   <Pill tone={s.overall === 'pass' ? 'good' : s.overall === 'flag' ? 'warn' : 'bad'}>{s.overall}</Pill>
@@ -1277,10 +1278,11 @@ function TrendsView({ store }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {flaggedRecent.map(s => {
               const b = store.batches.find(x => x.id === s.batch_id);
+              const bSku = b ? store.skus.find(x => x.id === b.sku_id) : null;
               return (
                 <div key={s.id} style={{ borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{b ? b.batch_number : '—'}</p>
+                    <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{b ? `${b.batch_number} - ${bSku ? bSku.name : 'Unknown SKU'}` : '—'}</p>
                     <Pill tone="bad">{s.overall}</Pill>
                   </div>
                   {s.off_flavors.length > 0 && <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--bad)' }}>{s.off_flavors.map(f => `${f.flavor} (${f.intensity}/5)`).join(', ')}</p>}
