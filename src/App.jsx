@@ -228,6 +228,7 @@ function useSupabaseData(session) {
       batch_id: sess.batchId, taster_id: session.user.id, date: sess.date, scores: sess.scores,
       overall: sess.overall, off_flavors: sess.offFlavors, notes: sess.notes,
       retention_checkpoint_id: sess.retentionCheckpointId || null,
+      tasting_type: sess.tastingType || 'ttt',
     });
     if (error) throw error;
     if (sess.retentionCheckpointId) {
@@ -236,8 +237,8 @@ function useSupabaseData(session) {
     await loadAll();
   };
 
-  const createPanel = async ({ date, label, batchIds }) => {
-    const { data: panel, error } = await supabase.from('panels').insert({ date, label }).select().single();
+  const createPanel = async ({ date, label, batchIds, panelType }) => {
+    const { data: panel, error } = await supabase.from('panels').insert({ date, label, panel_type: panelType || 'ttt' }).select().single();
     if (error) throw error;
     await supabase.from('panel_batches').insert(batchIds.map(bid => ({ panel_id: panel.id, batch_id: bid })));
     await loadAll();
@@ -451,9 +452,11 @@ function AuthScreen() {
 // ============================================================
 // Tasting form
 // ============================================================
-function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
+function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTastingType }) {
   const [batchId, setBatchId] = useState(presetBatchId || (store.batches[0] ? store.batches[0].id : ''));
   useEffect(() => { if (presetBatchId) setBatchId(presetBatchId); }, [presetBatchId]);
+  const [tastingType, setTastingType] = useState(presetTastingType || 'ttt');
+  useEffect(() => { if (presetTastingType) setTastingType(presetTastingType); }, [presetTastingType]);
   const [scores, setScores] = useState(defaultAllScores());
   const [activeSection, setActiveSection] = useState('aroma');
   const [overall, setOverall] = useState('pass');
@@ -476,7 +479,11 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
     if (!batchId) return;
     setSubmitting(true); setError('');
     try {
-      await store.addSession({ batchId, date: todayISO(), scores, overall, offFlavors, notes, retentionCheckpointId: retentionCheckpointId || null });
+      await store.addSession({
+        batchId, date: todayISO(), scores, overall, offFlavors, notes,
+        retentionCheckpointId: tastingType === 'retention' ? (retentionCheckpointId || null) : null,
+        tastingType,
+      });
       onDone();
     } catch (e) {
       setError(e.message || 'Could not submit — try again.');
@@ -484,6 +491,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
       setSubmitting(false);
     }
   };
+
 
   return (
     <div>
@@ -505,6 +513,23 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
           <h3 style={{ margin: '0 0 4px', fontFamily: 'var(--font-display)', fontSize: 20 }}>Log a tasting</h3>
           <p style={{ margin: '0 0 20px', color: 'var(--text-muted)', fontSize: 13 }}>Tasting as <strong style={{ color: 'var(--text)' }}>{currentProfile.name}</strong></p>
 
+          <Field label="Tasting type">
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={() => setTastingType('ttt')} style={{
+                flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                border: `1px solid ${tastingType === 'ttt' ? 'var(--accent)' : 'var(--line)'}`,
+                background: tastingType === 'ttt' ? 'rgba(199,143,60,0.16)' : 'transparent',
+                color: tastingType === 'ttt' ? 'var(--accent)' : 'var(--text-muted)',
+              }}>True to Type</button>
+              <button type="button" onClick={() => setTastingType('retention')} style={{
+                flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                border: `1px solid ${tastingType === 'retention' ? 'var(--accent)' : 'var(--line)'}`,
+                background: tastingType === 'retention' ? 'rgba(199,143,60,0.16)' : 'transparent',
+                color: tastingType === 'retention' ? 'var(--accent)' : 'var(--text-muted)',
+              }}>Retention</button>
+            </div>
+          </Field>
+
           <Field label="Batch">
             <select style={inputStyle} value={batchId} onChange={e => { setBatchId(e.target.value); setRetentionCheckpointId(''); }}>
               {store.batches.filter(b => b.package_date).map(b => {
@@ -514,8 +539,8 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
             </select>
           </Field>
 
-          {dueCheckpoints.length > 0 && (
-            <Field label="Retention checkpoint (optional)">
+          {tastingType === 'retention' && dueCheckpoints.length > 0 && (
+            <Field label="Retention checkpoint">
               <select style={inputStyle} value={retentionCheckpointId} onChange={e => setRetentionCheckpointId(e.target.value)}>
                 <option value="">Not a scheduled checkpoint</option>
                 {dueCheckpoints.map(r => <option key={r.id} value={r.id}>Day {r.days} — due {r.due_date}</option>)}
@@ -616,6 +641,7 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
   const [building, setBuilding] = useState(false);
   const [label, setLabel] = useState('');
   const [date, setDate] = useState(todayISO());
+  const [panelType, setPanelType] = useState('ttt');
   const [selected, setSelected] = useState([]);
   const [busy, setBusy] = useState(false);
 
@@ -625,8 +651,8 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
     if (selected.length === 0) return;
     setBusy(true);
     try {
-      await store.createPanel({ date, label: label || `Panel — ${date}`, batchIds: selected });
-      setBuilding(false); setLabel(''); setSelected([]);
+      await store.createPanel({ date, label: label || `Panel — ${date}`, batchIds: selected, panelType });
+      setBuilding(false); setLabel(''); setSelected([]); setPanelType('ttt');
     } finally {
       setBusy(false);
     }
@@ -637,7 +663,9 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
   const panelProgress = (panel) => {
     const batchIds = store.panelBatches.filter(pb => pb.panel_id === panel.id).map(pb => pb.batch_id);
     const total = batchIds.length;
-    const doneByMe = batchIds.filter(bid => store.sessions.some(s => s.batch_id === bid && s.taster_id === currentProfile.id)).length;
+    const doneByMe = batchIds.filter(bid =>
+      store.sessions.some(s => s.batch_id === bid && s.taster_id === currentProfile.id && s.tasting_type === panel.panel_type)
+    ).length;
     return { total, doneByMe, batchIds };
   };
 
@@ -657,6 +685,22 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
             <Field label="Date"><input type="date" style={inputStyle} value={date} onChange={e => setDate(e.target.value)} /></Field>
             <Field label="Label (optional)"><input style={inputStyle} value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Tuesday panel" /></Field>
           </div>
+          <Field label="Panel type">
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" onClick={() => setPanelType('ttt')} style={{
+                flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                border: `1px solid ${panelType === 'ttt' ? 'var(--accent)' : 'var(--line)'}`,
+                background: panelType === 'ttt' ? 'rgba(199,143,60,0.16)' : 'transparent',
+                color: panelType === 'ttt' ? 'var(--accent)' : 'var(--text-muted)',
+              }}>True to Type</button>
+              <button type="button" onClick={() => setPanelType('retention')} style={{
+                flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                border: `1px solid ${panelType === 'retention' ? 'var(--accent)' : 'var(--line)'}`,
+                background: panelType === 'retention' ? 'rgba(199,143,60,0.16)' : 'transparent',
+                color: panelType === 'retention' ? 'var(--accent)' : 'var(--text-muted)',
+              }}>Retention</button>
+            </div>
+          </Field>
           <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Select batches ({selected.length} chosen)</p>
           {store.batches.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>No batches yet — add some on the Batches tab first.</p>}
           <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 14 }}>
@@ -687,7 +731,10 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
             <Card key={panel.id}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                 <div>
-                  <p style={{ margin: 0, fontWeight: 700, fontSize: 15, fontFamily: 'var(--font-display)' }}>{panel.label}</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <p style={{ margin: 0, fontWeight: 700, fontSize: 15, fontFamily: 'var(--font-display)' }}>{panel.label}</p>
+                    <Pill tone={panel.panel_type === 'retention' ? 'warn' : 'neutral'}>{panel.panel_type === 'retention' ? 'Retention' : 'True to Type'}</Pill>
+                  </div>
                   <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{panel.date} · {progress.total} batches</p>
                 </div>
                 <Pill tone={progress.doneByMe === progress.total ? 'good' : 'warn'}>{progress.doneByMe}/{progress.total} done by you</Pill>
@@ -696,15 +743,15 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
                 {progress.batchIds.map(bid => {
                   const batch = store.batches.find(b => b.id === bid);
                   const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
-                  const myTasting = store.sessions.find(s => s.batch_id === bid && s.taster_id === currentProfile.id);
-                  const totalTastings = store.sessions.filter(s => s.batch_id === bid).length;
+                  const myTasting = store.sessions.find(s => s.batch_id === bid && s.taster_id === currentProfile.id && s.tasting_type === panel.panel_type);
+                  const totalTastings = store.sessions.filter(s => s.batch_id === bid && s.tasting_type === panel.panel_type).length;
                   return (
                     <div key={bid} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--surface-2)', borderRadius: 6 }}>
                       <span style={{ fontSize: 13.5 }}>{batch ? batch.batch_number : '—'} — {sku ? sku.name : ''}</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{totalTastings} tasting{totalTastings !== 1 ? 's' : ''} logged</span>
                         {myTasting ? <Pill tone="good">You've tasted this</Pill> : (
-                          <Button variant="ghost" onClick={() => onLogTasting(bid)} style={{ fontSize: 12, padding: '6px 10px' }}>Taste now <ChevronRight size={13} /></Button>
+                          <Button variant="ghost" onClick={() => onLogTasting(bid, panel.panel_type)} style={{ fontSize: 12, padding: '6px 10px' }}>Taste now <ChevronRight size={13} /></Button>
                         )}
                       </div>
                     </div>
@@ -747,7 +794,7 @@ function RetentionQueue({ store, onLogTasting }) {
               <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>{r.batch.batch_number} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>· {r.sku ? r.sku.name : ''}</span></p>
               <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>Day {r.days} checkpoint · due {r.due_date}</p>
             </div>
-            {r.assessed ? <Pill tone="good">Assessed</Pill> : <Button variant="ghost" onClick={() => onLogTasting(r.batch.id)} style={{ fontSize: 12.5, padding: '7px 12px' }}>Log tasting <ChevronRight size={14} /></Button>}
+            {r.assessed ? <Pill tone="good">Assessed</Pill> : <Button variant="ghost" onClick={() => onLogTasting(r.batch.id, 'retention')} style={{ fontSize: 12.5, padding: '7px 12px' }}>Log tasting <ChevronRight size={14} /></Button>}
           </div>
         ))}
       </div>
@@ -929,6 +976,7 @@ function BriteBatchCard({ batch, store, currentProfile }) {
       setBusy(false);
     }
   };
+
   return (
     <Card>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
@@ -1197,6 +1245,7 @@ function exportSessionsCSV(store) {
         Taster: store.profileName(s.taster_id),
         'Batch Number': batch ? batch.batch_number : '',
         SKU: sku ? sku.name : '',
+        Type: s.tasting_type === 'retention' ? 'Retention' : 'TTT',
         Overall: s.overall,
         'Off-Flavors': (s.off_flavors || []).map(f => `${f.flavor} (${f.intensity}/5)`).join('; '),
         Notes: s.notes || '',
@@ -1282,6 +1331,7 @@ function TrendsView({ store }) {
   }, [store.skus]);
 
   const sku = store.skus.find(s => s.id === skuId);
+  const ttSessions = useMemo(() => store.sessions.filter(s => s.tasting_type === 'ttt'), [store.sessions]);
 
   const batchSeries = useMemo(() => {
     if (!sku) return [];
@@ -1306,7 +1356,7 @@ function TrendsView({ store }) {
 
     return skuBatches
       .map(b => {
-        const sessions = store.sessions.filter(s => s.batch_id === b.id);
+        const sessions = ttSessions.filter(s => s.batch_id === b.id);
         if (sessions.length === 0) return null;
         return {
           batch: b.batch_number,
@@ -1316,13 +1366,13 @@ function TrendsView({ store }) {
         };
       })
       .filter(Boolean);
-  }, [sku, store.batches, store.sessions]);
+  }, [sku, store.batches, ttSessions]);
 
   const topDeviators = useMemo(() => {
     if (!sku) return [];
     const target = normalizeTarget(sku.target);
     const skuBatchIds = new Set(store.batches.filter(b => b.sku_id === sku.id).map(b => b.id));
-    const sessions = store.sessions.filter(s => skuBatchIds.has(s.batch_id));
+    const sessions = ttSessions.filter(s => skuBatchIds.has(s.batch_id));
 
     const acc = {};
     ['aroma', 'flavor'].forEach(section => {
@@ -1350,14 +1400,14 @@ function TrendsView({ store }) {
       .map(d => ({ ...d, avgDeviation: d.sum / d.count }))
       .sort((a, b) => b.avgDeviation - a.avgDeviation)
       .slice(0, 8);
-  }, [sku, store.batches, store.sessions]);
+  }, [sku, store.batches, ttSessions]);
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Trends</h3>
-          <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>How far off target each batch has run, over time.</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>How far off target each batch has run, over time. True to Type tastings only — retention tastings are excluded, since aging is expected to change a beer over time.</p>
         </div>
         <select style={{ ...inputStyle, width: 220 }} value={skuId} onChange={e => setSkuId(e.target.value)}>
           {store.skus.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -1442,7 +1492,7 @@ function Dashboard({ store }) {
                 <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
                   <div>
                     <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{b ? `${b.batch_number} - ${bSku ? bSku.name : 'Unknown SKU'}` : '—'}</p>
-                    <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>{store.profileName(s.taster_id)} · {s.date}</p>
+                    <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>{store.profileName(s.taster_id)} · {s.date} · {s.tasting_type === 'retention' ? 'Retention' : 'TTT'}</p>
                   </div>
                   <Pill tone={s.overall === 'pass' ? 'good' : s.overall === 'flag' ? 'warn' : 'bad'}>{s.overall}</Pill>
                 </div>
@@ -1461,7 +1511,10 @@ function Dashboard({ store }) {
                 <div key={s.id} style={{ borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{b ? `${b.batch_number} - ${bSku ? bSku.name : 'Unknown SKU'}` : '—'}</p>
-                    <Pill tone="bad">{s.overall}</Pill>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <Pill>{s.tasting_type === 'retention' ? 'Retention' : 'TTT'}</Pill>
+                      <Pill tone="bad">{s.overall}</Pill>
+                    </div>
                   </div>
                   {s.off_flavors.length > 0 && <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--bad)' }}>{s.off_flavors.map(f => `${f.flavor} (${f.intensity}/5)`).join(', ')}</p>}
                   {s.notes && <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>"{s.notes.slice(0, 90)}{s.notes.length > 90 ? '…' : ''}"</p>}
@@ -1484,6 +1537,7 @@ export default function App() {
   const [profile, setProfile] = useState(null);
   const [tab, setTab] = useState('panels');
   const [presetBatchId, setPresetBatchId] = useState(null);
+  const [presetTastingType, setPresetTastingType] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -1565,7 +1619,7 @@ export default function App() {
       <div style={{ display: 'flex' }}>
         <nav style={{ width: 210, borderRight: '1px solid var(--line)', padding: '20px 12px', flexShrink: 0 }}>
           {tabs.map(t => (
-            <button key={t.id} onClick={() => { setTab(t.id); setPresetBatchId(null); }} style={{
+            <button key={t.id} onClick={() => { setTab(t.id); setPresetBatchId(null); setPresetTastingType(null); }} style={{
               width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', marginBottom: 4,
               borderRadius: 7, border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 13.5, fontWeight: 600,
               background: tab === t.id ? 'var(--surface-2)' : 'transparent',
@@ -1576,10 +1630,10 @@ export default function App() {
         </nav>
 
         <main style={{ flex: 1, padding: '28px 32px', maxWidth: 1180 }}>
-          {tab === 'panels' && <PanelsView store={store} isLead={isLead} currentProfile={profile} onLogTasting={(bid) => { setPresetBatchId(bid); setTab('submit'); }} />}
-          {tab === 'submit' && <TastingForm store={store} currentProfile={profile} onDone={() => setTab('panels')} presetBatchId={presetBatchId} />}
+          {tab === 'panels' && <PanelsView store={store} isLead={isLead} currentProfile={profile} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setTab('submit'); }} />}
+          {tab === 'submit' && <TastingForm store={store} currentProfile={profile} onDone={() => setTab('panels')} presetBatchId={presetBatchId} presetTastingType={presetTastingType} />}
           {tab === 'brite' && <PackagingSignOffView store={store} currentProfile={profile} />}
-          {tab === 'retention' && <RetentionQueue store={store} onLogTasting={(bid) => { setPresetBatchId(bid); setTab('submit'); }} />}
+          {tab === 'retention' && <RetentionQueue store={store} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setTab('submit'); }} />}
           {tab === 'batches' && <BatchesView store={store} isLead={isLead} />}
           {tab === 'skus' && <SkuProfiles store={store} isLead={isLead} />}
           {tab === 'trends' && isLead && <TrendsView store={store} />}
