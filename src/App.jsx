@@ -943,8 +943,6 @@ function SkuProfiles({ store, isLead }) {
   const [busy, setBusy] = useState(false);
   const [previewSection, setPreviewSection] = useState('aroma');
 
-  const blank = () => ({ id: null, name: '', style: '', abv: 5.0, descriptors: [], watchouts: [], target: defaultAllScores(), tolerance: 2, notes: '' });
-
   const save = async (sku) => {
     setBusy(true);
     try {
@@ -975,7 +973,6 @@ function SkuProfiles({ store, isLead }) {
               }}>{SECTION_LABELS[sec]}</button>
             ))}
           </div>
-          {isLead && <Button onClick={() => setEditing(blank())}><Plus size={15} /> New SKU</Button>}
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
