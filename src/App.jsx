@@ -1040,6 +1040,62 @@ function exportSessionsCSV(store) {
   URL.revokeObjectURL(url);
 }
 
+function OffFlavorReport({ store }) {
+  const stats = useMemo(() => {
+    const byFlavor = {};
+    OFF_FLAVORS.forEach(f => { byFlavor[f] = { count: 0, intensitySum: 0, skuCounts: {} }; });
+
+    store.sessions.forEach(s => {
+      const batch = store.batches.find(b => b.id === s.batch_id);
+      const sku = batch ? store.skus.find(x => x.id === batch.sku_id) : null;
+      (s.off_flavors || []).forEach(({ flavor, intensity }) => {
+        if (!byFlavor[flavor]) return;
+        byFlavor[flavor].count += 1;
+        byFlavor[flavor].intensitySum += intensity;
+        if (sku) byFlavor[flavor].skuCounts[sku.name] = (byFlavor[flavor].skuCounts[sku.name] || 0) + 1;
+      });
+    });
+
+    return Object.entries(byFlavor)
+      .map(([flavor, d]) => ({
+        flavor,
+        count: d.count,
+        avgIntensity: d.count > 0 ? (d.intensitySum / d.count) : 0,
+        topSku: Object.entries(d.skuCounts).sort((a, b) => b[1] - a[1])[0],
+      }))
+      .filter(x => x.count > 0)
+      .sort((a, b) => b.count - a.count);
+  }, [store.sessions, store.batches, store.skus]);
+
+  const maxCount = Math.max(1, ...stats.map(s => s.count));
+
+  return (
+    <Card style={{ marginTop: 20 }}>
+      <p style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Off-flavor incidence</p>
+      <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--text-faint)' }}>Across every tasting logged. A recurring pattern here usually points at process, not a single bad batch.</p>
+      {stats.length === 0 ? (
+        <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>No off-flavors logged yet — clean panel so far.</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {stats.map(s => (
+            <div key={s.flavor}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{s.flavor}</span>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                  {s.count}× · avg {s.avgIntensity.toFixed(1)}/5{s.topSku ? ` · mostly ${s.topSku[0]}` : ''}
+                </span>
+              </div>
+              <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ width: `${(s.count / maxCount) * 100}%`, height: '100%', background: s.avgIntensity >= 3.5 ? 'var(--bad)' : 'var(--accent)' }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Dashboard({ store }) {
   const today = todayISO();
   const overdue = store.retention.filter(r => !r.assessed && r.due_date < today);
@@ -1106,6 +1162,7 @@ function Dashboard({ store }) {
           </div>
         </Card>
       </div>
+      <OffFlavorReport store={store} />
     </div>
   );
 }
