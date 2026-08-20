@@ -844,6 +844,13 @@ function PackagingSignOffView({ store, currentProfile }) {
     [store.batches]
   );
 
+  const historyBatches = useMemo(() => {
+    const batchIdsWithChecks = new Set(store.briteChecks.map(c => c.batch_id));
+    return store.batches
+      .filter(b => b.package_date && batchIdsWithChecks.has(b.id))
+      .sort((a, b) => Number(b.batch_number) - Number(a.batch_number));
+  }, [store.batches, store.briteChecks]);
+
   return (
     <div>
       <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Packaging sign off</h3>
@@ -858,7 +865,45 @@ function PackagingSignOffView({ store, currentProfile }) {
           ))}
         </div>
       )}
+
+      {historyBatches.length > 0 && (
+        <div style={{ marginTop: 32 }}>
+          <p style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', margin: '0 0 4px' }}>History — already packaged</p>
+          <p style={{ fontSize: 12.5, color: 'var(--text-faint)', margin: '0 0 14px' }}>Past sign-off checks for batches that have since gone through packaging.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {historyBatches.map(b => (
+              <BriteHistoryCard key={b.id} batch={b} store={store} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function BriteHistoryCard({ batch, store }) {
+  const sku = store.skus.find(s => s.id === batch.sku_id);
+  const checks = store.briteChecks.filter(c => c.batch_id === batch.id).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const latest = checks[0];
+
+  return (
+    <Card>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+        <div>
+          <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{batch.batch_number} — {sku ? sku.name : 'Unknown SKU'}</p>
+          <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>Packaged {batch.package_date} · {checks.length} check{checks.length !== 1 ? 's' : ''}</p>
+        </div>
+        {latest && <Pill tone={latest.decision === 'green' ? 'good' : 'bad'}>{latest.decision === 'green' ? 'Green light' : 'Red light'}</Pill>}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {checks.map(c => (
+          <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, borderTop: '1px solid var(--line)', paddingTop: 6 }}>
+            <span style={{ color: 'var(--text-muted)' }}>{store.profileName(c.taster_id)} · {c.date}{c.notes ? ` — "${c.notes}"` : ''}</span>
+            <Pill tone={c.decision === 'green' ? 'good' : 'bad'}>{c.decision === 'green' ? 'Green' : 'Red'}</Pill>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
