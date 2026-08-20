@@ -1114,9 +1114,104 @@ function BriteBatchCard({ batch, store, currentProfile }) {
   );
 }
 
+function BatchReportModal({ batch, store, onClose }) {
+  const sku = store.skus.find(s => s.id === batch.sku_id);
+  const target = sku ? normalizeTarget(sku.target) : null;
+  const allSessions = store.sessions.filter(s => s.batch_id === batch.id).sort((a, b) => a.date.localeCompare(b.date));
+  const ttSessions = allSessions.filter(s => s.tasting_type === 'ttt');
+  const checkpoints = store.retention.filter(r => r.batch_id === batch.id).sort((a, b) => a.days - b.days);
+  const briteChecks = store.briteChecks.filter(c => c.batch_id === batch.id).sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+  const avgTtScores = (section) => {
+    const out = {};
+    TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => {
+      const id = traitId(g.category, t);
+      const vals = ttSessions.map(s => s.scores?.[section]?.[id]).filter(v => v != null);
+      out[id] = vals.length > 0 ? vals.reduce((a, c) => a + c, 0) / vals.length : null;
+    }));
+    return out;
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 60, padding: '32px 20px', overflowY: 'auto' }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: 32, width: 760, maxWidth: '100%' }}>
+        <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <Button variant="ghost" onClick={onClose}><X size={15} /> Close</Button>
+          <Button onClick={() => window.print()}><Upload size={15} style={{ transform: 'rotate(180deg)' }} /> Print / Save as PDF</Button>
+        </div>
+
+        <div id="batch-report-printable">
+          <div style={{ borderBottom: '2px solid var(--accent)', paddingBottom: 14, marginBottom: 20 }}>
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: 0.5, fontFamily: 'var(--font-mono)' }}>Batch QA Report</p>
+            <h2 style={{ margin: '2px 0 4px', fontFamily: 'var(--font-display)', fontSize: 26 }}>{batch.batch_number} — {sku ? sku.name : 'Unknown SKU'}</h2>
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)' }}>
+              {sku ? `${sku.style} · ${sku.abv}% ABV` : ''} · {batch.format} · Packaged {batch.package_date || 'not yet packaged'}
+            </p>
+          </div>
+
+          {briteChecks.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <p style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>Packaging sign off</p>
+              {briteChecks.map(c => (
+                <p key={c.id} style={{ margin: '0 0 4px', fontSize: 13 }}>
+                  {c.date} — {store.profileName(c.taster_id)}: <strong style={{ color: c.decision === 'green' ? 'var(--good)' : 'var(--bad)' }}>{c.decision === 'green' ? 'Green light' : 'Red light'}</strong>
+                  {c.notes ? ` — "${c.notes}"` : ''}
+                </p>
+              ))}
+            </div>
+          )}
+
+          {sku && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+              {Object.keys(SECTION_LABELS).map(sec => (
+                <div key={sec}>
+                  <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', textAlign: 'center' }}>{SECTION_LABELS[sec]} (avg vs target)</p>
+                  <TraitSpiderChart section={sec} target={target[sec]} actual={avgTtScores(sec)} height={260} />
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ marginBottom: 20 }}>
+            <p style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>Retention schedule</p>
+            {checkpoints.length === 0 ? <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>No retention checkpoints.</p> : (
+              <div style={{ display: 'flex', gap: 8 }}>
+                {checkpoints.map(c => (
+                  <span key={c.id} style={{ fontSize: 12, fontFamily: 'var(--font-mono)', padding: '4px 10px', borderRadius: 5, background: c.assessed ? 'rgba(122,157,122,0.16)' : 'var(--surface-2)', color: c.assessed ? 'var(--good)' : 'var(--text-muted)' }}>
+                    Day {c.days} — {c.assessed ? 'Assessed' : `due ${c.due_date}`}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <p style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>All tastings ({allSessions.length})</p>
+            {allSessions.length === 0 ? <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>No tastings logged yet.</p> : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {allSessions.map(s => (
+                  <div key={s.id} style={{ borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 13, fontWeight: 600 }}>{s.date} — {store.profileName(s.taster_id)} ({s.tasting_type === 'retention' ? 'Retention' : 'TTT'})</span>
+                      <Pill tone={s.overall === 'pass' ? 'good' : s.overall === 'flag' ? 'warn' : 'bad'}>{s.overall}</Pill>
+                    </div>
+                    {(s.off_flavors || []).length > 0 && <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--bad)' }}>{s.off_flavors.map(f => `${f.flavor} (${f.intensity}/5)`).join(', ')}</p>}
+                    {s.notes && <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>"{s.notes}"</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BatchesView({ store, isLead }) {
   const [showNew, setShowNew] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [reportBatch, setReportBatch] = useState(null);
   const [form, setForm] = useState({ skuId: '', batchNumber: '', packageDate: todayISO(), format: 'Can' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -1153,6 +1248,7 @@ function BatchesView({ store, isLead }) {
       </div>
 
       {showImport && <ImportBatchesModal store={store} onClose={() => setShowImport(false)} />}
+      {reportBatch && <BatchReportModal batch={reportBatch} store={store} onClose={() => setReportBatch(null)} />}
 
       {showNew && (
         <Card style={{ marginBottom: 20 }}>
@@ -1184,9 +1280,10 @@ function BatchesView({ store, isLead }) {
                   <p style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>{b.batch_number}</p>
                   <p style={{ margin: '2px 0 0', color: 'var(--text-muted)', fontSize: 13 }}>{sku ? sku.name : 'Unknown SKU'} · {b.format} · packaged {b.package_date || '—'}</p>
                 </div>
-                <div style={{ display: 'flex', gap: 6 }}>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <Pill>{sessions.length} tasting{sessions.length !== 1 ? 's' : ''}</Pill>
                   {flagged > 0 && <Pill tone="bad">{flagged} flagged</Pill>}
+                  <Button variant="ghost" onClick={() => setReportBatch(b)} style={{ padding: '5px 10px', fontSize: 11.5 }}>Report</Button>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
@@ -1603,8 +1700,6 @@ function TrendsView({ store }) {
   );
 }
 
-
-
 function computeSkuHealth(sku, store) {
   const skuBatchIds = new Set(store.batches.filter(b => b.sku_id === sku.id).map(b => b.id));
   const allSessions = store.sessions.filter(s => skuBatchIds.has(s.batch_id));
@@ -1905,6 +2000,12 @@ export default function App() {
         input[type=range] { -webkit-appearance: none; background: transparent; height: 20px; }
         input[type=range]::-webkit-slider-runnable-track { height: 4px; background: var(--line); border-radius: 2px; }
         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; margin-top: -6px; width: 16px; height: 16px; border-radius: 50%; background: currentColor; cursor: pointer; border: 2px solid var(--surface); }
+        @media print {
+          body * { visibility: hidden; }
+          #batch-report-printable, #batch-report-printable * { visibility: visible; }
+          #batch-report-printable { position: absolute; top: 0; left: 0; width: 100%; background: white; color: black; }
+          .no-print { display: none !important; }
+        }
       `}</style>
 
       <header style={{ borderBottom: '1px solid var(--line)', padding: '18px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
