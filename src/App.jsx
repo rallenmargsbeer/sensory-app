@@ -4,13 +4,70 @@ import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Che
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
 
-const ATTRS = [
-  { key: 'appearance', label: 'Appearance' },
-  { key: 'aroma', label: 'Aroma' },
-  { key: 'flavor', label: 'Flavor' },
-  { key: 'mouthfeel', label: 'Mouthfeel' },
-  { key: 'finish', label: 'Finish' },
+// ============================================================
+// Trait taxonomy — fixed master list of every trait scored, per your
+// spider diagram spec. Two sections (Aroma, Flavour & Body), each with
+// Category > Trait groups. Every SKU/tasting uses this exact same list;
+// only the scores differ.
+// ============================================================
+const INTENSITY_LEVELS = [
+  { label: 'Absent', score: 1 },
+  { label: 'Low', score: 3 },
+  { label: 'Medium', score: 5 },
+  { label: 'High', score: 7 },
+  { label: 'Very High', score: 9 },
 ];
+
+function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''); }
+function traitId(category, trait) { return `${slug(category)}__${slug(trait)}`; }
+
+const TRAIT_TAXONOMY = {
+  aroma: [
+    { category: 'Malt', traits: ['Caramel', 'Toast', 'Biscuit', 'Bread', 'Roast', 'Choc'] },
+    { category: 'Hops', traits: ['Citrus', 'Floral', 'Pine', 'Fruity', 'Herbal', 'Earthy', 'Diesel', 'Noble', 'Other'] },
+    { category: 'Esters', traits: ['Apple', 'Fruity', 'Bready'] },
+    { category: 'Phenols', traits: ['Phenolic'] },
+    { category: 'Other', traits: ['Other 1', 'Other 2', 'Other 3'] },
+  ],
+  flavor: [
+    { category: 'Malt', traits: ['Sweetness', 'Caramel', 'Toasty', 'Biscuity', 'Cracker', 'Bready', 'Roasted', 'Chocolate'] },
+    { category: 'Hops', traits: ['Citrus', 'Floral', 'Fruity', 'Resinous', 'Herbal', 'Spicy', 'Earthy', 'Grassy', 'Savoury'] },
+    { category: 'Ester Profile', traits: ['Apple', 'Fruity', 'Bready', 'Phenolic'] },
+    { category: 'Bitterness', traits: ['Initial bitterness', 'Lingering Bitterness'] },
+    { category: 'Acidity', traits: ['Tartness', 'Lactic', 'Acetic'] },
+    { category: 'Body', traits: ['Crispness', 'Salty', 'Viscosity', 'Carbonation'] },
+    { category: 'Alcohol', traits: ['Heat'] },
+    { category: 'Other', traits: ['Other 1'] },
+  ],
+};
+
+const SECTION_LABELS = { aroma: 'Aroma', flavor: 'Flavour & Body' };
+
+function defaultSectionScores(section) {
+  const out = {};
+  TRAIT_TAXONOMY[section].forEach(group => group.traits.forEach(t => { out[traitId(group.category, t)] = 1; }));
+  return out;
+}
+function defaultAllScores() { return { aroma: defaultSectionScores('aroma'), flavor: defaultSectionScores('flavor') }; }
+function normalizeTarget(target) {
+  if (target && typeof target.aroma === 'object' && typeof target.flavor === 'object') return target;
+  return defaultAllScores(); // handles the old 5-attribute format from before this rebuild
+}
+function getScore(scoresObj, section, id) { return (scoresObj && scoresObj[section] && scoresObj[section][id]) ?? 1; }
+
+// Some trait names repeat within a section under different categories
+// (e.g. "Fruity" under both Hops and Esters) — disambiguate only those
+// for radar chart labels.
+function traitLabelsFor(section) {
+  const nameCounts = {};
+  TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => { nameCounts[t] = (nameCounts[t] || 0) + 1; }));
+  const labels = {};
+  TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => {
+    const id = traitId(g.category, t);
+    labels[id] = nameCounts[t] > 1 ? `${t} (${g.category})` : t;
+  }));
+  return labels;
+}
 
 const OFF_FLAVORS = [
   'Diacetyl (buttery)', 'DMS (cooked corn)', 'Acetaldehyde (green apple)',
@@ -116,7 +173,7 @@ function useSupabaseData(session) {
       if (!sku) {
         const { data: newSku, error: skuErr } = await supabase.from('skus').insert({
           name: row.skuName, style: '', abv: 0, descriptors: [], watchouts: [],
-          target: { appearance: 3, aroma: 3, flavor: 3, mouthfeel: 3, finish: 3 }, tolerance: 1,
+          target: defaultAllScores(), tolerance: 2,
           notes: 'Auto-created from a sheet import — set a real target profile.',
         }).select().single();
         if (skuErr) throw skuErr;
@@ -212,37 +269,67 @@ const inputStyle = {
   padding: '9px 11px', color: 'var(--text)', fontSize: 14, fontFamily: 'var(--font-body)', boxSizing: 'border-box',
 };
 
-function ScoreSlider({ value, onChange, target, tolerance }) {
-  const inTolerance = target == null || Math.abs(value - target) <= tolerance;
+function IntensityPicker({ value, onChange, target, tolerance }) {
+  const offTarget = target != null && Math.abs(value - target) > tolerance;
   return (
-    <div>
-      <div style={{ position: 'relative', height: 28 }}>
-        {target != null && (
-          <div style={{ position: 'absolute', top: 8, height: 12, left: `${((target - tolerance - 1) / 4) * 100}%`, width: `${(tolerance * 2 / 4) * 100}%`, background: 'rgba(122,157,122,0.18)', borderRadius: 3 }} />
-        )}
-        <input type="range" min={1} max={5} step={1} value={value} onChange={e => onChange(Number(e.target.value))}
-          style={{ width: '100%', position: 'relative', accentColor: inTolerance || target == null ? 'var(--good)' : 'var(--bad)' }} />
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>
-        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
-      </div>
+    <div style={{ display: 'flex', gap: 4 }}>
+      {INTENSITY_LEVELS.map(lvl => {
+        const active = value === lvl.score;
+        const isTarget = target === lvl.score;
+        return (
+          <button key={lvl.score} type="button" onClick={() => onChange(lvl.score)} title={lvl.label} style={{
+            flex: 1, padding: '6px 2px', fontSize: 10.5, borderRadius: 5, cursor: 'pointer', fontFamily: 'var(--font-mono)',
+            border: `1px solid ${isTarget ? 'var(--accent)' : 'var(--line)'}`,
+            background: active ? (offTarget ? 'rgba(196,90,68,0.22)' : 'rgba(122,157,122,0.22)') : 'transparent',
+            color: active ? (offTarget ? 'var(--bad)' : 'var(--good)') : 'var(--text-muted)',
+            fontWeight: active ? 700 : 400,
+          }}>{lvl.label.split(' ').map(w => w[0]).join('')}</button>
+        );
+      })}
     </div>
   );
 }
 
-function FlavorRadar({ target, actual, height = 260 }) {
-  const chartData = ATTRS.map(a => ({ attribute: a.label, Target: target ? target[a.key] : 0, Batch: actual ? actual[a.key] : 0 }));
+function TraitSpiderChart({ section, target, actual, height = 420 }) {
+  const labels = traitLabelsFor(section);
+  const chartData = TRAIT_TAXONOMY[section].flatMap(g => g.traits.map(t => {
+    const id = traitId(g.category, t);
+    return { trait: labels[id], Target: target ? (target[id] ?? 1) : 0, Batch: actual ? (actual[id] ?? 1) : 0 };
+  }));
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <RadarChart data={chartData} outerRadius="72%">
+      <RadarChart data={chartData} outerRadius="78%">
         <PolarGrid stroke="var(--line)" />
-        <PolarAngleAxis dataKey="attribute" tick={{ fill: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--font-mono)' }} />
-        <PolarRadiusAxis domain={[0, 5]} tick={false} axisLine={false} />
+        <PolarAngleAxis dataKey="trait" tick={{ fill: 'var(--text-muted)', fontSize: 10.5, fontFamily: 'var(--font-mono)' }} />
+        <PolarRadiusAxis domain={[0, 9]} tick={false} axisLine={false} />
         {target && <Radar name="TTT Target" dataKey="Target" stroke="var(--text-faint)" strokeDasharray="4 3" fill="var(--text-faint)" fillOpacity={0.05} />}
         {actual && <Radar name="This Batch" dataKey="Batch" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.28} />}
         <Legend wrapperStyle={{ fontSize: 12, fontFamily: 'var(--font-body)' }} />
       </RadarChart>
     </ResponsiveContainer>
+  );
+}
+
+function TraitSectionEditor({ section, scores, onChange, target, tolerance }) {
+  return (
+    <div>
+      {TRAIT_TAXONOMY[section].map(group => (
+        <div key={group.category} style={{ marginBottom: 16 }}>
+          <p style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: 0.4, margin: '0 0 8px' }}>{group.category}</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {group.traits.map(t => {
+              const id = traitId(group.category, t);
+              return (
+                <div key={id} style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: 10, alignItems: 'center' }}>
+                  <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{t}</span>
+                  <IntensityPicker value={scores[id] ?? 1} onChange={v => onChange(id, v)} target={target ? (target[id] ?? null) : null} tolerance={tolerance ?? 0} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -334,7 +421,8 @@ function AuthScreen() {
 function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
   const [batchId, setBatchId] = useState(presetBatchId || (store.batches[0] ? store.batches[0].id : ''));
   useEffect(() => { if (presetBatchId) setBatchId(presetBatchId); }, [presetBatchId]);
-  const [scores, setScores] = useState({ appearance: 3, aroma: 3, flavor: 3, mouthfeel: 3, finish: 3 });
+  const [scores, setScores] = useState(defaultAllScores());
+  const [activeSection, setActiveSection] = useState('aroma');
   const [overall, setOverall] = useState('pass');
   const [offFlavors, setOffFlavors] = useState([]);
   const [notes, setNotes] = useState('');
@@ -347,6 +435,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
   const dueCheckpoints = batch ? store.retention.filter(r => r.batch_id === batch.id && !r.assessed) : [];
 
   const toggleOff = (f) => setOffFlavors(prev => prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f]);
+  const setTraitScore = (section, id, v) => setScores(s => ({ ...s, [section]: { ...s[section], [id]: v } }));
 
   const submit = async () => {
     if (!batchId) return;
@@ -362,80 +451,96 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: 24 }}>
-      <Card>
-        <h3 style={{ margin: '0 0 4px', fontFamily: 'var(--font-display)', fontSize: 20 }}>Log a tasting</h3>
-        <p style={{ margin: '0 0 20px', color: 'var(--text-muted)', fontSize: 13 }}>Tasting as <strong style={{ color: 'var(--text)' }}>{currentProfile.name}</strong></p>
-
-        <Field label="Batch">
-          <select style={inputStyle} value={batchId} onChange={e => { setBatchId(e.target.value); setRetentionCheckpointId(''); }}>
-            {store.batches.map(b => {
-              const s = store.skus.find(sk => sk.id === b.sku_id);
-              return <option key={b.id} value={b.id}>{b.batch_number} — {s ? s.name : 'Unknown SKU'}</option>;
-            })}
-          </select>
-        </Field>
-
-        {dueCheckpoints.length > 0 && (
-          <Field label="Retention checkpoint (optional)">
-            <select style={inputStyle} value={retentionCheckpointId} onChange={e => setRetentionCheckpointId(e.target.value)}>
-              <option value="">Not a scheduled checkpoint</option>
-              {dueCheckpoints.map(r => <option key={r.id} value={r.id}>Day {r.days} — due {r.due_date}</option>)}
-            </select>
-          </Field>
-        )}
-
-        {ATTRS.map(a => (
-          <Field key={a.key} label={`${a.label} — ${scores[a.key]}/5`}>
-            <ScoreSlider value={scores[a.key]} onChange={v => setScores(s => ({ ...s, [a.key]: v }))} target={sku ? sku.target[a.key] : null} tolerance={sku ? sku.tolerance : 1} />
-          </Field>
-        ))}
-
-        <Field label="Off-flavors detected">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {OFF_FLAVORS.map(f => (
-              <button key={f} type="button" onClick={() => toggleOff(f)} style={{
-                fontSize: 12, padding: '6px 10px', borderRadius: 20, cursor: 'pointer',
-                border: `1px solid ${offFlavors.includes(f) ? 'var(--bad)' : 'var(--line)'}`,
-                background: offFlavors.includes(f) ? 'rgba(196,90,68,0.16)' : 'transparent',
-                color: offFlavors.includes(f) ? 'var(--bad)' : 'var(--text-muted)',
-              }}>{f}</button>
-            ))}
-          </div>
-        </Field>
-
-        <Field label="Tasting notes">
-          <textarea style={{ ...inputStyle, minHeight: 90, resize: 'vertical', fontFamily: 'var(--font-body)' }}
-            value={notes} onChange={e => setNotes(e.target.value)} placeholder="What stood out?" />
-        </Field>
-
-        <Field label="Overall call">
-          <div style={{ display: 'flex', gap: 8 }}>
-            {['pass', 'flag', 'fail'].map(v => (
-              <button key={v} type="button" onClick={() => setOverall(v)} style={{
-                flex: 1, padding: '9px 0', borderRadius: 7, textTransform: 'capitalize', fontWeight: 600, fontSize: 13, cursor: 'pointer',
-                border: `1px solid ${overall === v ? 'var(--accent)' : 'var(--line)'}`,
-                background: overall === v ? 'rgba(199,143,60,0.16)' : 'transparent',
-                color: overall === v ? 'var(--accent)' : 'var(--text-muted)',
-              }}>{v}</button>
-            ))}
-          </div>
-        </Field>
-
-        {error && <p style={{ color: 'var(--bad)', fontSize: 12.5, marginBottom: 8 }}>{error}</p>}
-        <Button onClick={submit} disabled={!batchId || submitting} style={{ width: '100%', justifyContent: 'center' }}>
-          <Check size={15} /> {submitting ? 'Submitting…' : 'Submit tasting'}
-        </Button>
+    <div>
+      <Card style={{ marginBottom: 20 }}>
+        <h4 style={{ margin: '0 0 2px', fontFamily: 'var(--font-display)', fontSize: 18 }}>{sku ? sku.name : 'No SKU selected'}</h4>
+        <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--text-muted)' }}>{sku ? `${sku.style} · ${sku.abv}% ABV` : ''}</p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+          {Object.keys(SECTION_LABELS).map(sec => (
+            <div key={sec}>
+              <p style={{ margin: '0 0 4px', fontSize: 12, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', textAlign: 'center' }}>{SECTION_LABELS[sec]}</p>
+              <TraitSpiderChart section={sec} target={sku ? sku.target[sec] : null} actual={scores[sec]} height={440} />
+            </div>
+          ))}
+        </div>
       </Card>
 
-      <div>
-        <Card style={{ marginBottom: 16 }}>
-          <h4 style={{ margin: '0 0 4px', fontFamily: 'var(--font-display)', fontSize: 16 }}>{sku ? sku.name : 'No SKU'}</h4>
-          <p style={{ margin: '0 0 14px', fontSize: 12.5, color: 'var(--text-muted)' }}>{sku ? `${sku.style} · ${sku.abv}% ABV` : ''}</p>
-          <FlavorRadar target={sku ? sku.target : null} actual={scores} height={230} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: 24 }}>
+        <Card>
+          <h3 style={{ margin: '0 0 4px', fontFamily: 'var(--font-display)', fontSize: 20 }}>Log a tasting</h3>
+          <p style={{ margin: '0 0 20px', color: 'var(--text-muted)', fontSize: 13 }}>Tasting as <strong style={{ color: 'var(--text)' }}>{currentProfile.name}</strong></p>
+
+          <Field label="Batch">
+            <select style={inputStyle} value={batchId} onChange={e => { setBatchId(e.target.value); setRetentionCheckpointId(''); }}>
+              {store.batches.map(b => {
+                const s = store.skus.find(sk => sk.id === b.sku_id);
+                return <option key={b.id} value={b.id}>{b.batch_number} — {s ? s.name : 'Unknown SKU'}</option>;
+              })}
+            </select>
+          </Field>
+
+          {dueCheckpoints.length > 0 && (
+            <Field label="Retention checkpoint (optional)">
+              <select style={inputStyle} value={retentionCheckpointId} onChange={e => setRetentionCheckpointId(e.target.value)}>
+                <option value="">Not a scheduled checkpoint</option>
+                {dueCheckpoints.map(r => <option key={r.id} value={r.id}>Day {r.days} — due {r.due_date}</option>)}
+              </select>
+            </Field>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            {Object.keys(SECTION_LABELS).map(sec => (
+              <button key={sec} type="button" onClick={() => setActiveSection(sec)} style={{
+                flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                border: `1px solid ${activeSection === sec ? 'var(--accent)' : 'var(--line)'}`,
+                background: activeSection === sec ? 'rgba(199,143,60,0.16)' : 'transparent',
+                color: activeSection === sec ? 'var(--accent)' : 'var(--text-muted)',
+              }}>{SECTION_LABELS[sec]}</button>
+            ))}
+          </div>
+
+          <TraitSectionEditor section={activeSection} scores={scores[activeSection]} onChange={(id, v) => setTraitScore(activeSection, id, v)}
+            target={sku ? sku.target[activeSection] : null} tolerance={sku ? sku.tolerance : 2} />
+
+          <Field label="Off-flavors detected">
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {OFF_FLAVORS.map(f => (
+                <button key={f} type="button" onClick={() => toggleOff(f)} style={{
+                  fontSize: 12, padding: '6px 10px', borderRadius: 20, cursor: 'pointer',
+                  border: `1px solid ${offFlavors.includes(f) ? 'var(--bad)' : 'var(--line)'}`,
+                  background: offFlavors.includes(f) ? 'rgba(196,90,68,0.16)' : 'transparent',
+                  color: offFlavors.includes(f) ? 'var(--bad)' : 'var(--text-muted)',
+                }}>{f}</button>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Tasting notes">
+            <textarea style={{ ...inputStyle, minHeight: 90, resize: 'vertical', fontFamily: 'var(--font-body)' }}
+              value={notes} onChange={e => setNotes(e.target.value)} placeholder="What stood out?" />
+          </Field>
+
+          <Field label="Overall call">
+            <div style={{ display: 'flex', gap: 8 }}>
+              {['pass', 'flag', 'fail'].map(v => (
+                <button key={v} type="button" onClick={() => setOverall(v)} style={{
+                  flex: 1, padding: '9px 0', borderRadius: 7, textTransform: 'capitalize', fontWeight: 600, fontSize: 13, cursor: 'pointer',
+                  border: `1px solid ${overall === v ? 'var(--accent)' : 'var(--line)'}`,
+                  background: overall === v ? 'rgba(199,143,60,0.16)' : 'transparent',
+                  color: overall === v ? 'var(--accent)' : 'var(--text-muted)',
+                }}>{v}</button>
+              ))}
+            </div>
+          </Field>
+
+          {error && <p style={{ color: 'var(--bad)', fontSize: 12.5, marginBottom: 8 }}>{error}</p>}
+          <Button onClick={submit} disabled={!batchId || submitting} style={{ width: '100%', justifyContent: 'center' }}>
+            <Check size={15} /> {submitting ? 'Submitting…' : 'Submit tasting'}
+          </Button>
         </Card>
+
         {sku && (
-          <Card>
+          <Card style={{ alignSelf: 'start' }}>
             <p style={{ margin: '0 0 8px', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>True-to-type reference</p>
             <p style={{ margin: '0 0 10px', fontSize: 13.5, lineHeight: 1.5 }}>{sku.notes}</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 }}>{sku.descriptors.map(d => <Pill key={d}>{d}</Pill>)}</div>
@@ -766,9 +871,12 @@ function BatchesView({ store, isLead }) {
 // SKU / TTT profiles
 // ============================================================
 function SkuEditor({ sku, onCancel, onSave, busy }) {
-  const [s, setS] = useState(sku);
+  const [s, setS] = useState({ ...sku, target: normalizeTarget(sku.target) });
+  const [activeSection, setActiveSection] = useState('aroma');
+  const setTraitTarget = (section, id, v) => setS(x => ({ ...x, target: { ...x.target, [section]: { ...x.target[section], [id]: v } } }));
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: 24 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: 24 }}>
       <Card>
         <h3 style={{ margin: '0 0 16px', fontFamily: 'var(--font-display)', fontSize: 18 }}>{sku.name ? `Edit ${sku.name}` : 'New SKU'}</h3>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
@@ -779,8 +887,8 @@ function SkuEditor({ sku, onCancel, onSave, busy }) {
         <Field label="Reference notes"><textarea style={{ ...inputStyle, minHeight: 70, fontFamily: 'var(--font-body)' }} value={s.notes} onChange={e => setS(x => ({ ...x, notes: e.target.value }))} /></Field>
         <Field label="Key descriptors"><TagInput values={s.descriptors} onChange={v => setS(x => ({ ...x, descriptors: v }))} placeholder="e.g. caramel, add & press enter" /></Field>
         <Field label="Off-flavor watch-outs"><TagInput values={s.watchouts} onChange={v => setS(x => ({ ...x, watchouts: v }))} placeholder="e.g. diacetyl, add & press enter" /></Field>
-        <Field label={`Tolerance band (± ${s.tolerance})`}>
-          <input type="range" min={0} max={2} step={0.5} value={s.tolerance} onChange={e => setS(x => ({ ...x, tolerance: Number(e.target.value) }))} style={{ width: '100%' }} />
+        <Field label={`Tolerance band (± ${s.tolerance} — how far a tasting can be from target before it's flagged)`}>
+          <input type="range" min={0} max={8} step={2} value={s.tolerance} onChange={e => setS(x => ({ ...x, tolerance: Number(e.target.value) }))} style={{ width: '100%' }} />
         </Field>
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
           <Button onClick={() => onSave(s)} disabled={!s.name || busy}>{busy ? 'Saving…' : <><Check size={15} /> Save profile</>}</Button>
@@ -788,13 +896,19 @@ function SkuEditor({ sku, onCancel, onSave, busy }) {
         </div>
       </Card>
       <Card>
-        <p style={{ margin: '0 0 8px', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Target profile</p>
-        {ATTRS.map(a => (
-          <Field key={a.key} label={`${a.label} — ${s.target[a.key]}/5`}>
-            <ScoreSlider value={s.target[a.key]} onChange={v => setS(x => ({ ...x, target: { ...x.target, [a.key]: v } }))} target={null} tolerance={0} />
-          </Field>
-        ))}
-        <FlavorRadar target={s.target} actual={null} height={200} />
+        <p style={{ margin: '0 0 12px', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Target profile</p>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          {Object.keys(SECTION_LABELS).map(sec => (
+            <button key={sec} type="button" onClick={() => setActiveSection(sec)} style={{
+              flex: 1, padding: '8px 0', borderRadius: 7, fontWeight: 700, fontSize: 12.5, cursor: 'pointer',
+              border: `1px solid ${activeSection === sec ? 'var(--accent)' : 'var(--line)'}`,
+              background: activeSection === sec ? 'rgba(199,143,60,0.16)' : 'transparent',
+              color: activeSection === sec ? 'var(--accent)' : 'var(--text-muted)',
+            }}>{SECTION_LABELS[sec]}</button>
+          ))}
+        </div>
+        <TraitSectionEditor section={activeSection} scores={s.target[activeSection]} onChange={(id, v) => setTraitTarget(activeSection, id, v)} target={null} tolerance={0} />
+        <TraitSpiderChart section={activeSection} target={s.target[activeSection]} actual={null} height={220} />
       </Card>
     </div>
   );
@@ -803,8 +917,9 @@ function SkuEditor({ sku, onCancel, onSave, busy }) {
 function SkuProfiles({ store, isLead }) {
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [previewSection, setPreviewSection] = useState('aroma');
 
-  const blank = () => ({ id: null, name: '', style: '', abv: 5.0, descriptors: [], watchouts: [], target: { appearance: 3, aroma: 3, flavor: 3, mouthfeel: 3, finish: 3 }, tolerance: 1, notes: '' });
+  const blank = () => ({ id: null, name: '', style: '', abv: 5.0, descriptors: [], watchouts: [], target: defaultAllScores(), tolerance: 2, notes: '' });
 
   const save = async (sku) => {
     setBusy(true);
@@ -825,22 +940,37 @@ function SkuProfiles({ store, isLead }) {
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>True-to-type profiles</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>What "correct" looks like for each SKU.</p>
         </div>
-        {isLead && <Button onClick={() => setEditing(blank())}><Plus size={15} /> New SKU</Button>}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {Object.keys(SECTION_LABELS).map(sec => (
+              <button key={sec} type="button" onClick={() => setPreviewSection(sec)} style={{
+                padding: '6px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+                border: `1px solid ${previewSection === sec ? 'var(--accent)' : 'var(--line)'}`,
+                background: previewSection === sec ? 'rgba(199,143,60,0.16)' : 'transparent',
+                color: previewSection === sec ? 'var(--accent)' : 'var(--text-muted)',
+              }}>{SECTION_LABELS[sec]}</button>
+            ))}
+          </div>
+          {isLead && <Button onClick={() => setEditing(blank())}><Plus size={15} /> New SKU</Button>}
+        </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
-        {store.skus.map(sku => (
-          <Card key={sku.id}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <p style={{ margin: 0, fontWeight: 700, fontSize: 15, fontFamily: 'var(--font-display)' }}>{sku.name}</p>
-                <p style={{ margin: '2px 0 10px', color: 'var(--text-muted)', fontSize: 12.5 }}>{sku.style} · {sku.abv}% ABV</p>
+        {store.skus.map(sku => {
+          const target = normalizeTarget(sku.target);
+          return (
+            <Card key={sku.id}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <p style={{ margin: 0, fontWeight: 700, fontSize: 15, fontFamily: 'var(--font-display)' }}>{sku.name}</p>
+                  <p style={{ margin: '2px 0 10px', color: 'var(--text-muted)', fontSize: 12.5 }}>{sku.style} · {sku.abv}% ABV</p>
+                </div>
+                {isLead && <Button variant="ghost" onClick={() => setEditing(sku)} style={{ padding: '5px 10px', fontSize: 12 }}>Edit</Button>}
               </div>
-              {isLead && <Button variant="ghost" onClick={() => setEditing(sku)} style={{ padding: '5px 10px', fontSize: 12 }}>Edit</Button>}
-            </div>
-            <FlavorRadar target={sku.target} actual={null} height={190} />
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>{sku.descriptors.map(d => <Pill key={d}>{d}</Pill>)}</div>
-          </Card>
-        ))}
+              <TraitSpiderChart section={previewSection} target={target[previewSection]} actual={null} height={190} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>{sku.descriptors.map(d => <Pill key={d}>{d}</Pill>)}</div>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );
