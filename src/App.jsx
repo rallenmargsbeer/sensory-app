@@ -237,6 +237,26 @@ function useSupabaseData(session) {
     await loadAll();
   };
 
+  const updateSession = async (sessionId, sess) => {
+    const { error } = await supabase.from('sessions').update({
+      batch_id: sess.batchId, date: sess.date, scores: sess.scores,
+      overall: sess.overall, off_flavors: sess.offFlavors, notes: sess.notes,
+      retention_checkpoint_id: sess.retentionCheckpointId || null,
+      tasting_type: sess.tastingType || 'ttt',
+    }).eq('id', sessionId);
+    if (error) throw error;
+    if (sess.retentionCheckpointId) {
+      await supabase.from('retention_checkpoints').update({ assessed: true }).eq('id', sess.retentionCheckpointId);
+    }
+    await loadAll();
+  };
+
+  const deleteSession = async (sessionId) => {
+    const { error } = await supabase.from('sessions').delete().eq('id', sessionId);
+    if (error) throw error;
+    await loadAll();
+  };
+
   const createPanel = async ({ date, label, batchIds, panelType }) => {
     const { data: panel, error } = await supabase.from('panels').insert({ date, label, panel_type: panelType || 'ttt' }).select().single();
     if (error) throw error;
@@ -261,7 +281,7 @@ function useSupabaseData(session) {
   return {
     skus, batches, retention, sessions, panels, panelBatches, briteChecks, profiles, profileName,
     loading, error, reload: loadAll,
-    addSku, updateSku, addBatch, addSession, createPanel, deletePanel, importBatches, addBriteCheck,
+    addSku, updateSku, addBatch, addSession, updateSession, deleteSession, createPanel, deletePanel, importBatches, addBriteCheck,
   };
 }
 
@@ -458,23 +478,23 @@ function AuthScreen() {
 // ============================================================
 // Tasting form
 // ============================================================
-function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTastingType }) {
-  const [batchId, setBatchId] = useState(presetBatchId || (store.batches[0] ? store.batches[0].id : ''));
-  useEffect(() => { if (presetBatchId) setBatchId(presetBatchId); }, [presetBatchId]);
-  const [tastingType, setTastingType] = useState(presetTastingType || 'ttt');
-  useEffect(() => { if (presetTastingType) setTastingType(presetTastingType); }, [presetTastingType]);
-  const [scores, setScores] = useState(defaultAllScores());
+function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTastingType, editSession }) {
+  const [batchId, setBatchId] = useState(editSession ? editSession.batch_id : (presetBatchId || (store.batches[0] ? store.batches[0].id : '')));
+  useEffect(() => { if (presetBatchId && !editSession) setBatchId(presetBatchId); }, [presetBatchId]);
+  const [tastingType, setTastingType] = useState(editSession ? editSession.tasting_type : (presetTastingType || 'ttt'));
+  useEffect(() => { if (presetTastingType && !editSession) setTastingType(presetTastingType); }, [presetTastingType]);
+  const [scores, setScores] = useState(editSession ? editSession.scores : defaultAllScores());
   const [activeSection, setActiveSection] = useState('aroma');
-  const [overall, setOverall] = useState('pass');
-  const [offFlavors, setOffFlavors] = useState([]);
-  const [notes, setNotes] = useState('');
-  const [retentionCheckpointId, setRetentionCheckpointId] = useState('');
+  const [overall, setOverall] = useState(editSession ? editSession.overall : 'pass');
+  const [offFlavors, setOffFlavors] = useState(editSession ? (editSession.off_flavors || []) : []);
+  const [notes, setNotes] = useState(editSession ? (editSession.notes || '') : '');
+  const [retentionCheckpointId, setRetentionCheckpointId] = useState(editSession ? (editSession.retention_checkpoint_id || '') : '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   const batch = store.batches.find(b => b.id === batchId);
   const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
-  const dueCheckpoints = batch ? store.retention.filter(r => r.batch_id === batch.id && !r.assessed) : [];
+  const dueCheckpoints = batch ? store.retention.filter(r => r.batch_id === batch.id && (!r.assessed || r.id === retentionCheckpointId)) : [];
 
   const toggleOff = (f) => setOffFlavors(prev =>
     prev.some(x => x.flavor === f) ? prev.filter(x => x.flavor !== f) : [...prev, { flavor: f, intensity: 3 }]);
@@ -485,11 +505,16 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
     if (!batchId) return;
     setSubmitting(true); setError('');
     try {
-      await store.addSession({
-        batchId, date: todayISO(), scores, overall, offFlavors, notes,
+      const payload = {
+        batchId, date: editSession ? editSession.date : todayISO(), scores, overall, offFlavors, notes,
         retentionCheckpointId: tastingType === 'retention' ? (retentionCheckpointId || null) : null,
         tastingType,
-      });
+      };
+      if (editSession) {
+        await store.updateSession(editSession.id, payload);
+      } else {
+        await store.addSession(payload);
+      }
       onDone();
     } catch (e) {
       setError(e.message || 'Could not submit — try again.');
@@ -516,7 +541,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: 24 }}>
         <Card>
-          <h3 style={{ margin: '0 0 4px', fontFamily: 'var(--font-display)', fontSize: 20 }}>Log a tasting</h3>
+          <h3 style={{ margin: '0 0 4px', fontFamily: 'var(--font-display)', fontSize: 20 }}>{editSession ? 'Edit tasting' : 'Log a tasting'}</h3>
           <p style={{ margin: '0 0 20px', color: 'var(--text-muted)', fontSize: 13 }}>Tasting as <strong style={{ color: 'var(--text)' }}>{currentProfile.name}</strong></p>
 
           <Field label="Tasting type">
@@ -623,7 +648,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
 
           {error && <p style={{ color: 'var(--bad)', fontSize: 12.5, marginBottom: 8 }}>{error}</p>}
           <Button onClick={submit} disabled={!batchId || submitting} style={{ width: '100%', justifyContent: 'center' }}>
-            <Check size={15} /> {submitting ? 'Submitting…' : 'Submit tasting'}
+            <Check size={15} /> {submitting ? 'Saving…' : editSession ? 'Save changes' : 'Submit tasting'}
           </Button>
         </Card>
 
@@ -1484,11 +1509,24 @@ function TrendsView({ store }) {
   );
 }
 
-function Dashboard({ store }) {
+function Dashboard({ store, onEditSession }) {
   const today = todayISO();
   const overdue = store.retention.filter(r => !r.assessed && r.due_date < today);
   const recent = [...store.sessions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
   const flaggedRecent = store.sessions.filter(s => s.overall !== 'pass').slice(-5).reverse();
+  const [deletingId, setDeletingId] = useState(null);
+
+  const handleDelete = async (s) => {
+    if (!window.confirm('Delete this tasting? This cannot be undone.')) return;
+    setDeletingId(s.id);
+    try {
+      await store.deleteSession(s.id);
+    } catch (e) {
+      alert(e.message || 'Could not delete — try again.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const stat = (label, value, tone) => (
     <Card style={{ flex: 1 }}>
@@ -1525,7 +1563,11 @@ function Dashboard({ store }) {
                     <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{b ? `${b.batch_number} - ${bSku ? bSku.name : 'Unknown SKU'}` : '—'}</p>
                     <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>{store.profileName(s.taster_id)} · {s.date} · {s.tasting_type === 'retention' ? 'Retention' : 'TTT'}</p>
                   </div>
-                  <Pill tone={s.overall === 'pass' ? 'good' : s.overall === 'flag' ? 'warn' : 'bad'}>{s.overall}</Pill>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Pill tone={s.overall === 'pass' ? 'good' : s.overall === 'flag' ? 'warn' : 'bad'}>{s.overall}</Pill>
+                    <Button variant="ghost" onClick={() => onEditSession(s)} style={{ padding: '4px 8px', fontSize: 11 }}>Edit</Button>
+                    <Button variant="danger" onClick={() => handleDelete(s)} disabled={deletingId === s.id} style={{ padding: '4px 8px', fontSize: 11 }}>{deletingId === s.id ? '…' : 'Delete'}</Button>
+                  </div>
                 </div>
               );
             })}
@@ -1569,6 +1611,7 @@ export default function App() {
   const [tab, setTab] = useState('panels');
   const [presetBatchId, setPresetBatchId] = useState(null);
   const [presetTastingType, setPresetTastingType] = useState(null);
+  const [editingSession, setEditingSession] = useState(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -1650,7 +1693,7 @@ export default function App() {
       <div style={{ display: 'flex' }}>
         <nav style={{ width: 210, borderRight: '1px solid var(--line)', padding: '20px 12px', flexShrink: 0 }}>
           {tabs.map(t => (
-            <button key={t.id} onClick={() => { setTab(t.id); setPresetBatchId(null); setPresetTastingType(null); }} style={{
+            <button key={t.id} onClick={() => { setTab(t.id); setPresetBatchId(null); setPresetTastingType(null); setEditingSession(null); }} style={{
               width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', marginBottom: 4,
               borderRadius: 7, border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 13.5, fontWeight: 600,
               background: tab === t.id ? 'var(--surface-2)' : 'transparent',
@@ -1662,13 +1705,13 @@ export default function App() {
 
         <main style={{ flex: 1, padding: '28px 32px', maxWidth: 1180 }}>
           {tab === 'panels' && <PanelsView store={store} isLead={isLead} currentProfile={profile} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setTab('submit'); }} />}
-          {tab === 'submit' && <TastingForm store={store} currentProfile={profile} onDone={() => setTab('panels')} presetBatchId={presetBatchId} presetTastingType={presetTastingType} />}
+          {tab === 'submit' && <TastingForm store={store} currentProfile={profile} onDone={() => { setEditingSession(null); setTab(editingSession ? 'dashboard' : 'panels'); }} presetBatchId={presetBatchId} presetTastingType={presetTastingType} editSession={editingSession} />}
           {tab === 'brite' && <PackagingSignOffView store={store} currentProfile={profile} />}
           {tab === 'retention' && isLead && <RetentionQueue store={store} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setTab('submit'); }} />}
           {tab === 'batches' && isLead && <BatchesView store={store} isLead={isLead} />}
           {tab === 'skus' && <SkuProfiles store={store} isLead={isLead} />}
           {tab === 'trends' && isLead && <TrendsView store={store} />}
-          {tab === 'dashboard' && isLead && <Dashboard store={store} />}
+          {tab === 'dashboard' && isLead && <Dashboard store={store} onEditSession={(s) => { setEditingSession(s); setTab('submit'); }} />}
         </main>
       </div>
     </div>
