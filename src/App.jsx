@@ -169,6 +169,7 @@ function useSupabaseData(session) {
   const importBatches = async (rows) => {
     let added = 0, skipped = 0;
     for (const row of rows) {
+      if (!row.packagedDate) { skipped++; continue; } // not yet packaged (or kegged, not canned) — don't import
       const existing = batches.find(b => b.batch_number === row.batchNumber);
       if (existing) { skipped++; continue; }
 
@@ -184,7 +185,7 @@ function useSupabaseData(session) {
         skus.push(sku); // keep local lookup current within this loop
       }
 
-      const packageDate = row.packagedDate || todayISO();
+      const packageDate = row.packagedDate;
       const { data: newBatch, error: batchErr } = await supabase.from('batches').insert({
         sku_id: sku.id, batch_number: row.batchNumber, package_date: packageDate, format: 'Can',
       }).select().single();
@@ -759,7 +760,7 @@ function ImportBatchesModal({ store, onClose }) {
         dateBrewed: (r['Date Brewed'] || '').trim(),
         packagedDate: (r['Packaged Date'] || r['Package Date'] || '').trim(),
       }))
-      .filter(r => r.batchNumber && /^\d+$/.test(r.batchNumber) && r.skuName && CORE_BEERS.includes(r.skuName));
+      .filter(r => r.batchNumber && /^\d+$/.test(r.batchNumber) && r.skuName && CORE_BEERS.includes(r.skuName) && r.packagedDate);
     setBusy(true); setError('');
     try {
       const summary = await store.importBatches(rows);
