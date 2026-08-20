@@ -43,6 +43,9 @@ const TRAIT_TAXONOMY = {
 
 const SECTION_LABELS = { aroma: 'Aroma', flavor: 'Flavour & Body' };
 
+// Only these exact names get imported — anything else is ignored.
+const CORE_BEERS = ['Drift', 'Pale', 'Kolsch', 'River Dog', 'In The Pines', 'Red IPA', 'Mermid', 'Stout', 'Brown', 'Draught'];
+
 function defaultSectionScores(section) {
   const out = {};
   TRAIT_TAXONOMY[section].forEach(group => group.traits.forEach(t => { out[traitId(group.category, t)] = 1; }));
@@ -756,7 +759,7 @@ function ImportBatchesModal({ store, onClose }) {
         dateBrewed: (r['Date Brewed'] || '').trim(),
         packagedDate: (r['Packaged Date'] || r['Package Date'] || '').trim(),
       }))
-      .filter(r => r.batchNumber && /^\d+$/.test(r.batchNumber) && r.skuName);
+      .filter(r => r.batchNumber && /^\d+$/.test(r.batchNumber) && r.skuName && CORE_BEERS.includes(r.skuName));
     setBusy(true); setError('');
     try {
       const summary = await store.importBatches(rows);
