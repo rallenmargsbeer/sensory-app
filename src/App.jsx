@@ -1004,6 +1004,42 @@ function SkuProfiles({ store, isLead }) {
 // ============================================================
 // Dashboard
 // ============================================================
+function exportSessionsCSV(store) {
+  const traitLabelsAroma = traitLabelsFor('aroma');
+  const traitLabelsFlavor = traitLabelsFor('flavor');
+  const aromaIds = TRAIT_TAXONOMY.aroma.flatMap(g => g.traits.map(t => traitId(g.category, t)));
+  const flavorIds = TRAIT_TAXONOMY.flavor.flatMap(g => g.traits.map(t => traitId(g.category, t)));
+
+  const rows = store.sessions
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(s => {
+      const batch = store.batches.find(b => b.id === s.batch_id);
+      const sku = batch ? store.skus.find(x => x.id === batch.sku_id) : null;
+      const row = {
+        Date: s.date,
+        Taster: store.profileName(s.taster_id),
+        'Batch Number': batch ? batch.batch_number : '',
+        SKU: sku ? sku.name : '',
+        Overall: s.overall,
+        'Off-Flavors': (s.off_flavors || []).map(f => `${f.flavor} (${f.intensity}/5)`).join('; '),
+        Notes: s.notes || '',
+      };
+      aromaIds.forEach(id => { row[`Aroma: ${traitLabelsAroma[id]}`] = s.scores?.aroma?.[id] ?? ''; });
+      flavorIds.forEach(id => { row[`Flavour & Body: ${traitLabelsFlavor[id]}`] = s.scores?.flavor?.[id] ?? ''; });
+      return row;
+    });
+
+  const csv = Papa.unparse(rows);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `tastings-export-${todayISO()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function Dashboard({ store }) {
   const today = todayISO();
   const overdue = store.retention.filter(r => !r.assessed && r.due_date < today);
@@ -1019,7 +1055,12 @@ function Dashboard({ store }) {
 
   return (
     <div>
-      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 20px' }}>Dashboard</h3>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: 0 }}>Dashboard</h3>
+        <Button variant="ghost" onClick={() => exportSessionsCSV(store)} disabled={store.sessions.length === 0}>
+          <Upload size={15} style={{ transform: 'rotate(180deg)' }} /> Export all tastings (CSV)
+        </Button>
+      </div>
       <div style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
         {stat('SKUs tracked', store.skus.length)}
         {stat('Active batches', store.batches.length)}
