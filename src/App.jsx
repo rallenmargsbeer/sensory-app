@@ -1588,8 +1588,8 @@ export default function App() {
     { id: 'panels', label: 'Panels', icon: Users, allowed: true },
     { id: 'submit', label: 'Submit tasting', icon: ClipboardList, allowed: true },
     { id: 'brite', label: 'Packaging sign off', icon: Droplet, allowed: true },
-    { id: 'retention', label: 'Retention queue', icon: Archive, allowed: true },
-    { id: 'batches', label: 'Batches', icon: Beaker, allowed: true },
+    { id: 'retention', label: 'Retention queue', icon: Archive, allowed: isLead },
+    { id: 'batches', label: 'Batches', icon: Beaker, allowed: isLead },
     { id: 'skus', label: 'TTT profiles', icon: Settings, allowed: true },
     { id: 'trends', label: 'Trends', icon: TrendingUp, allowed: isLead },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, allowed: isLead },
@@ -1664,8 +1664,8 @@ export default function App() {
           {tab === 'panels' && <PanelsView store={store} isLead={isLead} currentProfile={profile} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setTab('submit'); }} />}
           {tab === 'submit' && <TastingForm store={store} currentProfile={profile} onDone={() => setTab('panels')} presetBatchId={presetBatchId} presetTastingType={presetTastingType} />}
           {tab === 'brite' && <PackagingSignOffView store={store} currentProfile={profile} />}
-          {tab === 'retention' && <RetentionQueue store={store} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setTab('submit'); }} />}
-          {tab === 'batches' && <BatchesView store={store} isLead={isLead} />}
+          {tab === 'retention' && isLead && <RetentionQueue store={store} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setTab('submit'); }} />}
+          {tab === 'batches' && isLead && <BatchesView store={store} isLead={isLead} />}
           {tab === 'skus' && <SkuProfiles store={store} isLead={isLead} />}
           {tab === 'trends' && isLead && <TrendsView store={store} />}
           {tab === 'dashboard' && isLead && <Dashboard store={store} />}
