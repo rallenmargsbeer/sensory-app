@@ -1402,6 +1402,7 @@ export default function App() {
           {tab === 'skus' && <SkuProfiles store={store} isLead={isLead} />}
           {tab === 'trends' && isLead && <TrendsView store={store} />}
           {tab === 'dashboard' && isLead && <Dashboard store={store} />}
+        </main>
       </div>
     </div>
   );
