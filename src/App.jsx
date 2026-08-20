@@ -1605,6 +1605,75 @@ function TrendsView({ store }) {
 
 
 
+function computeSkuHealth(sku, store) {
+  const skuBatchIds = new Set(store.batches.filter(b => b.sku_id === sku.id).map(b => b.id));
+  const allSessions = store.sessions.filter(s => skuBatchIds.has(s.batch_id));
+  if (allSessions.length === 0) return null;
+
+  const passRate = allSessions.filter(s => s.overall === 'pass').length / allSessions.length;
+  const offFlavorRate = allSessions.filter(s => (s.off_flavors || []).length > 0).length / allSessions.length;
+
+  const ttSessions = allSessions.filter(s => s.tasting_type === 'ttt');
+  let avgDeviation = null;
+  if (ttSessions.length > 0) {
+    const target = normalizeTarget(sku.target);
+    let sum = 0, count = 0;
+    ['aroma', 'flavor'].forEach(section => {
+      TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => {
+        const id = traitId(g.category, t);
+        const targetVal = target[section][id] ?? 1;
+        const vals = ttSessions.map(s => s.scores?.[section]?.[id]).filter(v => v != null);
+        if (vals.length === 0) return;
+        const avgScore = vals.reduce((a, c) => a + c, 0) / vals.length;
+        sum += Math.abs(avgScore - targetVal);
+        count++;
+      }));
+    });
+    avgDeviation = count > 0 ? sum / count : null;
+  }
+
+  const deviationScore = avgDeviation != null ? Math.max(0, 1 - Math.min(avgDeviation, 4) / 4) : null;
+  const healthScore = deviationScore != null
+    ? (passRate * 0.4 + deviationScore * 0.4 + (1 - offFlavorRate) * 0.2) * 100
+    : (passRate * 0.7 + (1 - offFlavorRate) * 0.3) * 100;
+
+  return { passRate, offFlavorRate, avgDeviation, healthScore, tastingCount: allSessions.length };
+}
+
+function SkuHealthScoreboard({ store }) {
+  const rows = useMemo(() => {
+    return store.skus
+      .filter(s => CORE_BEERS.includes(s.name))
+      .map(s => ({ sku: s, health: computeSkuHealth(s, store) }))
+      .filter(r => r.health)
+      .sort((a, b) => a.health.healthScore - b.health.healthScore);
+  }, [store.skus, store.batches, store.sessions]);
+
+  const scoreColor = (score) => score >= 80 ? 'var(--good)' : score >= 60 ? 'var(--accent)' : 'var(--bad)';
+
+  return (
+    <Card style={{ marginBottom: 20 }}>
+      <p style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>SKU health scoreboard</p>
+      <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--text-faint)' }}>Pass rate, on-target consistency (True to Type tastings only), and off-flavor frequency — blended into one score, worst first.</p>
+      {rows.length === 0 ? (
+        <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>No tastings logged yet.</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {rows.map(({ sku, health }) => (
+            <div key={sku.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto', gap: 16, alignItems: 'center', borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
+              <span style={{ fontSize: 13.5, fontWeight: 600 }}>{sku.name}</span>
+              <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{Math.round(health.passRate * 100)}% pass</span>
+              <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{health.avgDeviation != null ? `±${health.avgDeviation.toFixed(1)} dev` : '— dev'}</span>
+              <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{Math.round(health.offFlavorRate * 100)}% off-flavor</span>
+              <span style={{ fontSize: 15, fontWeight: 700, fontFamily: 'var(--font-mono)', color: scoreColor(health.healthScore) }}>{Math.round(health.healthScore)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Dashboard({ store, onEditSession }) {
   const today = todayISO();
   const overdue = store.retention.filter(r => !r.assessed && r.due_date < today);
@@ -1645,6 +1714,7 @@ function Dashboard({ store, onEditSession }) {
         {stat('Overdue retention', overdue.length, overdue.length > 0 ? 'var(--bad)' : 'var(--good)')}
         {stat('Total tastings logged', store.sessions.length)}
       </div>
+      <SkuHealthScoreboard store={store} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
         <Card>
           <p style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Recent submissions</p>
