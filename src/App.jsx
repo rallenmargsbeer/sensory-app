@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend } from 'recharts';
-import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, LogOut } from 'lucide-react';
+import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, LogOut, TrendingUp } from 'lucide-react';
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
 
@@ -1096,7 +1096,136 @@ function OffFlavorReport({ store }) {
   );
 }
 
-function Dashboard({ store }) {
+function TrendsView({ store }) {
+  const [skuId, setSkuId] = useState('');
+  useEffect(() => {
+    if (!skuId && store.skus.length > 0) {
+      const core = store.skus.find(s => CORE_BEERS.includes(s.name));
+      setSkuId((core || store.skus[0]).id);
+    }
+  }, [store.skus]);
+
+  const sku = store.skus.find(s => s.id === skuId);
+
+  const batchSeries = useMemo(() => {
+    if (!sku) return [];
+    const target = normalizeTarget(sku.target);
+    const skuBatches = store.batches
+      .filter(b => b.sku_id === sku.id)
+      .sort((a, b) => (a.package_date || '').localeCompare(b.package_date || '') || Number(a.batch_number) - Number(b.batch_number));
+
+    const avgDeviationForBatch = (sessions, section) => {
+      const ids = TRAIT_TAXONOMY[section].flatMap(g => g.traits.map(t => traitId(g.category, t)));
+      let sum = 0, count = 0;
+      ids.forEach(id => {
+        const targetVal = target[section][id] ?? 1;
+        const vals = sessions.map(s => s.scores?.[section]?.[id]).filter(v => v != null);
+        if (vals.length === 0) return;
+        const avgScore = vals.reduce((a, c) => a + c, 0) / vals.length;
+        sum += Math.abs(avgScore - targetVal);
+        count++;
+      });
+      return count > 0 ? sum / count : 0;
+    };
+
+    return skuBatches
+      .map(b => {
+        const sessions = store.sessions.filter(s => s.batch_id === b.id);
+        if (sessions.length === 0) return null;
+        return {
+          batch: b.batch_number,
+          'Aroma deviation': Number(avgDeviationForBatch(sessions, 'aroma').toFixed(2)),
+          'Flavour & Body deviation': Number(avgDeviationForBatch(sessions, 'flavor').toFixed(2)),
+          tastingCount: sessions.length,
+        };
+      })
+      .filter(Boolean);
+  }, [sku, store.batches, store.sessions]);
+
+  const topDeviators = useMemo(() => {
+    if (!sku) return [];
+    const target = normalizeTarget(sku.target);
+    const skuBatchIds = new Set(store.batches.filter(b => b.sku_id === sku.id).map(b => b.id));
+    const sessions = store.sessions.filter(s => skuBatchIds.has(s.batch_id));
+
+    const acc = {};
+    ['aroma', 'flavor'].forEach(section => {
+      TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => {
+        const id = traitId(g.category, t);
+        acc[`${section}:${id}`] = { section, label: `${g.category}: ${t}`, sum: 0, count: 0 };
+      }));
+    });
+
+    sessions.forEach(s => {
+      ['aroma', 'flavor'].forEach(section => {
+        const scores = s.scores?.[section] || {};
+        Object.entries(scores).forEach(([id, val]) => {
+          const key = `${section}:${id}`;
+          if (!acc[key]) return;
+          const targetVal = target[section][id] ?? 1;
+          acc[key].sum += Math.abs(val - targetVal);
+          acc[key].count += 1;
+        });
+      });
+    });
+
+    return Object.values(acc)
+      .filter(d => d.count > 0)
+      .map(d => ({ ...d, avgDeviation: d.sum / d.count }))
+      .sort((a, b) => b.avgDeviation - a.avgDeviation)
+      .slice(0, 8);
+  }, [sku, store.batches, store.sessions]);
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div>
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Trends</h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>How far off target each batch has run, over time.</p>
+        </div>
+        <select style={{ ...inputStyle, width: 220 }} value={skuId} onChange={e => setSkuId(e.target.value)}>
+          {store.skus.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </div>
+
+      <Card style={{ marginBottom: 20 }}>
+        <p style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Deviation from target by batch</p>
+        {batchSeries.length < 2 ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>Need at least two tasted batches of this SKU to show a trend.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={batchSeries}>
+              <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" />
+              <XAxis dataKey="batch" tick={{ fill: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--font-mono)' }} />
+              <YAxis domain={[0, 8]} tick={{ fill: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--font-mono)' }} />
+              <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--line)', fontSize: 12.5 }} />
+              <Legend wrapperStyle={{ fontSize: 12, fontFamily: 'var(--font-body)' }} />
+              <Line type="monotone" dataKey="Aroma deviation" stroke="var(--accent)" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="Flavour & Body deviation" stroke="var(--bad)" strokeWidth={2} dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
+
+      <Card>
+        <p style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Biggest deviating traits</p>
+        <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--text-faint)' }}>Averaged across every tasting of {sku ? sku.name : 'this SKU'} — the traits most consistently off target.</p>
+        {topDeviators.length === 0 ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>No tastings logged for this SKU yet.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {topDeviators.map(d => (
+              <div key={d.label} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--line)', paddingBottom: 6 }}>
+                <span style={{ fontSize: 13 }}>{d.label} <span style={{ color: 'var(--text-faint)', fontSize: 11 }}>({SECTION_LABELS[d.section]})</span></span>
+                <span style={{ fontSize: 12.5, fontFamily: 'var(--font-mono)', color: d.avgDeviation >= 3 ? 'var(--bad)' : 'var(--text-muted)' }}>±{d.avgDeviation.toFixed(1)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}function Dashboard({ store }) {
   const today = todayISO();
   const overdue = store.retention.filter(r => !r.assessed && r.due_date < today);
   const recent = [...store.sessions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
@@ -1196,6 +1325,7 @@ export default function App() {
     { id: 'retention', label: 'Retention queue', icon: Archive, allowed: true },
     { id: 'batches', label: 'Batches', icon: Beaker, allowed: true },
     { id: 'skus', label: 'TTT profiles', icon: Settings, allowed: true },
+    { id: 'trends', label: 'Trends', icon: TrendingUp, allowed: isLead },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, allowed: isLead },
   ].filter(t => t.allowed);
 
@@ -1270,8 +1400,8 @@ export default function App() {
           {tab === 'retention' && <RetentionQueue store={store} onLogTasting={(bid) => { setPresetBatchId(bid); setTab('submit'); }} />}
           {tab === 'batches' && <BatchesView store={store} isLead={isLead} />}
           {tab === 'skus' && <SkuProfiles store={store} isLead={isLead} />}
+          {tab === 'trends' && isLead && <TrendsView store={store} />}
           {tab === 'dashboard' && isLead && <Dashboard store={store} />}
-        </main>
       </div>
     </div>
   );
