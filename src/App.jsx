@@ -434,7 +434,9 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
   const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
   const dueCheckpoints = batch ? store.retention.filter(r => r.batch_id === batch.id && !r.assessed) : [];
 
-  const toggleOff = (f) => setOffFlavors(prev => prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f]);
+  const toggleOff = (f) => setOffFlavors(prev =>
+    prev.some(x => x.flavor === f) ? prev.filter(x => x.flavor !== f) : [...prev, { flavor: f, intensity: 3 }]);
+  const setOffIntensity = (f, intensity) => setOffFlavors(prev => prev.map(x => x.flavor === f ? { ...x, intensity } : x));
   const setTraitScore = (section, id, v) => setScores(s => ({ ...s, [section]: { ...s[section], [id]: v } }));
 
   const submit = async () => {
@@ -502,17 +504,39 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
           <TraitSectionEditor section={activeSection} scores={scores[activeSection]} onChange={(id, v) => setTraitScore(activeSection, id, v)}
             target={sku ? sku.target[activeSection] : null} tolerance={sku ? sku.tolerance : 2} />
 
-          <Field label="Off-flavors detected">
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {OFF_FLAVORS.map(f => (
-                <button key={f} type="button" onClick={() => toggleOff(f)} style={{
-                  fontSize: 12, padding: '6px 10px', borderRadius: 20, cursor: 'pointer',
-                  border: `1px solid ${offFlavors.includes(f) ? 'var(--bad)' : 'var(--line)'}`,
-                  background: offFlavors.includes(f) ? 'rgba(196,90,68,0.16)' : 'transparent',
-                  color: offFlavors.includes(f) ? 'var(--bad)' : 'var(--text-muted)',
-                }}>{f}</button>
-              ))}
+                    <Field label="Off-flavors detected">
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: offFlavors.length > 0 ? 10 : 0 }}>
+              {OFF_FLAVORS.map(f => {
+                const selected = offFlavors.some(x => x.flavor === f);
+                return (
+                  <button key={f} type="button" onClick={() => toggleOff(f)} style={{
+                    fontSize: 12, padding: '6px 10px', borderRadius: 20, cursor: 'pointer',
+                    border: `1px solid ${selected ? 'var(--bad)' : 'var(--line)'}`,
+                    background: selected ? 'rgba(196,90,68,0.16)' : 'transparent',
+                    color: selected ? 'var(--bad)' : 'var(--text-muted)',
+                  }}>{f}</button>
+                );
+              })}
             </div>
+            {offFlavors.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {offFlavors.map(({ flavor, intensity }) => (
+                  <div key={flavor} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'center', background: 'var(--surface-2)', borderRadius: 6, padding: '8px 10px' }}>
+                    <span style={{ fontSize: 12.5, color: 'var(--bad)' }}>{flavor}</span>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {[1, 2, 3, 4, 5].map(n => (
+                        <button key={n} type="button" onClick={() => setOffIntensity(flavor, n)} style={{
+                          width: 24, height: 24, borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-mono)',
+                          border: `1px solid ${intensity === n ? 'var(--bad)' : 'var(--line)'}`,
+                          background: intensity === n ? 'rgba(196,90,68,0.28)' : 'transparent',
+                          color: intensity === n ? 'var(--bad)' : 'var(--text-muted)', fontWeight: intensity === n ? 700 : 400,
+                        }}>{n}</button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </Field>
 
           <Field label="Tasting notes">
@@ -1032,7 +1056,7 @@ function Dashboard({ store }) {
                     <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600 }}>{b ? b.batch_number : '—'}</p>
                     <Pill tone="bad">{s.overall}</Pill>
                   </div>
-                  {s.off_flavors.length > 0 && <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--bad)' }}>{s.off_flavors.join(', ')}</p>}
+                  {s.off_flavors.length > 0 && <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--bad)' }}>{s.off_flavors.map(f => `${f.flavor} (${f.intensity}/5)`).join(', ')}</p>}
                   {s.notes && <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>"{s.notes.slice(0, 90)}{s.notes.length > 90 ? '…' : ''}"</p>}
                 </div>
               );
