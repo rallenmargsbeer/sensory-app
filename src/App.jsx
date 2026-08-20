@@ -1674,6 +1674,74 @@ function SkuHealthScoreboard({ store }) {
   );
 }
 
+function computeTasterCalibration(store) {
+  const groups = {};
+  store.sessions.forEach(s => {
+    const key = `${s.batch_id}:${s.tasting_type}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(s);
+  });
+
+  const tasterStats = {};
+
+  Object.values(groups).forEach(group => {
+    if (group.length < 2) return; // need 2+ tasters on the same batch to compare
+
+    ['aroma', 'flavor'].forEach(section => {
+      TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => {
+        const id = traitId(g.category, t);
+        const vals = group.map(s => ({ taster: s.taster_id, val: s.scores?.[section]?.[id] })).filter(v => v.val != null);
+        if (vals.length < 2) return;
+        const panelAvg = vals.reduce((a, c) => a + c.val, 0) / vals.length;
+        vals.forEach(v => {
+          if (!tasterStats[v.taster]) tasterStats[v.taster] = { sumSigned: 0, sumAbs: 0, count: 0 };
+          const dev = v.val - panelAvg;
+          tasterStats[v.taster].sumSigned += dev;
+          tasterStats[v.taster].sumAbs += Math.abs(dev);
+          tasterStats[v.taster].count++;
+        });
+      }));
+    });
+  });
+
+  const MIN_SAMPLE = 20; // roughly one full overlapping tasting's worth of traits
+  return Object.entries(tasterStats)
+    .map(([tasterId, s]) => ({
+      tasterId,
+      avgBias: s.sumSigned / s.count,
+      avgAbsDeviation: s.sumAbs / s.count,
+      sampleSize: s.count,
+    }))
+    .filter(r => r.sampleSize >= MIN_SAMPLE)
+    .sort((a, b) => Math.abs(b.avgBias) - Math.abs(a.avgBias));
+}
+
+function TasterCalibration({ store }) {
+  const rows = useMemo(() => computeTasterCalibration(store), [store.sessions]);
+
+  return (
+    <Card style={{ marginBottom: 20 }}>
+      <p style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Taster calibration</p>
+      <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--text-faint)' }}>How each person's scores compare to the panel average, on batches multiple people tasted. Useful for training conversations — not a ranking.</p>
+      {rows.length === 0 ? (
+        <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>Not enough overlapping tastings yet — this needs multiple people tasting the same batch to compare.</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {rows.map(r => (
+            <div key={r.tasterId} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 16, alignItems: 'center', borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
+              <span style={{ fontSize: 13.5, fontWeight: 600 }}>{store.profileName(r.tasterId)}</span>
+              <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                {r.avgBias > 0.15 ? `scores ~${r.avgBias.toFixed(1)} higher than panel` : r.avgBias < -0.15 ? `scores ~${Math.abs(r.avgBias).toFixed(1)} lower than panel` : 'close to panel average'}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>{r.sampleSize} comparable scores</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Dashboard({ store, onEditSession }) {
   const today = todayISO();
   const overdue = store.retention.filter(r => !r.assessed && r.due_date < today);
@@ -1715,6 +1783,7 @@ function Dashboard({ store, onEditSession }) {
         {stat('Total tastings logged', store.sessions.length)}
       </div>
       <SkuHealthScoreboard store={store} />
+      <TasterCalibration store={store} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
         <Card>
           <p style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Recent submissions</p>
