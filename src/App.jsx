@@ -291,9 +291,9 @@ function useSupabaseData(session) {
 const Pill = ({ children, tone = 'neutral' }) => {
   const tones = {
     neutral: { background: 'var(--surface-2)', color: 'var(--text-muted)' },
-    good: { background: 'rgba(122,157,122,0.16)', color: 'var(--good)' },
-    bad: { background: 'rgba(196,90,68,0.16)', color: 'var(--bad)' },
-    warn: { background: 'rgba(199,143,60,0.18)', color: 'var(--accent)' },
+    good: { background: 'rgba(114,149,107,0.16)', color: 'var(--good)' },
+    bad: { background: 'rgba(184,71,43,0.16)', color: 'var(--bad)' },
+    warn: { background: 'rgba(243,112,58,0.18)', color: 'var(--accent)' },
   };
   return <span style={{ ...tones[tone], fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 20, letterSpacing: 0.3, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>{children}</span>;
 };
@@ -306,7 +306,7 @@ const Button = ({ children, onClick, variant = 'primary', style, type = 'button'
   const variants = {
     primary: { background: 'var(--accent)', color: '#1a1410', border: '1px solid var(--accent)' },
     ghost: { background: 'transparent', color: 'var(--text)', border: '1px solid var(--line)' },
-    danger: { background: 'transparent', color: 'var(--bad)', border: '1px solid rgba(196,90,68,0.4)' },
+    danger: { background: 'transparent', color: 'var(--bad)', border: '1px solid rgba(184,71,43,0.4)' },
   };
   return (
     <button type={type} onClick={onClick} disabled={disabled} style={{
@@ -340,7 +340,7 @@ function IntensityPicker({ value, onChange, target, tolerance }) {
           <button key={lvl.score} type="button" onClick={() => onChange(lvl.score)} title={lvl.label} style={{
             flex: 1, padding: '6px 2px', fontSize: 10.5, borderRadius: 5, cursor: 'pointer', fontFamily: 'var(--font-mono)',
             border: `1px solid ${isTarget ? 'var(--accent)' : 'var(--line)'}`,
-            background: active ? (offTarget ? 'rgba(196,90,68,0.22)' : 'rgba(122,157,122,0.22)') : 'transparent',
+            background: active ? (offTarget ? 'rgba(184,71,43,0.22)' : 'rgba(114,149,107,0.22)') : 'transparent',
             color: active ? (offTarget ? 'var(--bad)' : 'var(--good)') : 'var(--text-muted)',
             fontWeight: active ? 700 : 400,
           }}>{lvl.label.split(' ').map(w => w[0]).join('')}</button>
@@ -470,34 +470,32 @@ function AuthScreen() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)' }}>
-      <Card style={{ width: 360 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
-          <div style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Beaker size={18} color="#1a1410" />
+    <div style={{ minHeight: '100vh', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: 'var(--navy)' }}>
+      <div style={{ position: 'absolute', inset: 0, backgroundImage: 'url(/pattern-bg.jpg)', backgroundSize: 'cover', backgroundPosition: 'center', opacity: 0.16 }} />
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        <Card style={{ width: 360 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 22 }}>
+            <img src="/logo-green.png" alt="Margaret River Beer Co" style={{ height: 40, width: 'auto', marginBottom: 8 }} />
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', letterSpacing: 0.8, textTransform: 'uppercase' }}>Sensory Log</p>
           </div>
-          <div>
-            <p style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 19, fontWeight: 700, lineHeight: 1 }}>Panel</p>
-            <p style={{ margin: 0, fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', letterSpacing: 0.5 }}>SENSORY LOG</p>
-          </div>
-        </div>
 
-        {mode === 'signup' && <Field label="Your name"><input style={inputStyle} value={name} onChange={e => setName(e.target.value)} /></Field>}
-        <Field label="Email"><input type="email" style={inputStyle} value={email} onChange={e => setEmail(e.target.value)} /></Field>
-        <Field label="Password"><input type="password" style={inputStyle} value={password} onChange={e => setPassword(e.target.value)} /></Field>
+          {mode === 'signup' && <Field label="Your name"><input style={inputStyle} value={name} onChange={e => setName(e.target.value)} /></Field>}
+          <Field label="Email"><input type="email" style={inputStyle} value={email} onChange={e => setEmail(e.target.value)} /></Field>
+          <Field label="Password"><input type="password" style={inputStyle} value={password} onChange={e => setPassword(e.target.value)} /></Field>
 
-        {error && <p style={{ color: 'var(--bad)', fontSize: 12.5, marginBottom: 12 }}>{error}</p>}
+          {error && <p style={{ color: 'var(--bad)', fontSize: 12.5, marginBottom: 12 }}>{error}</p>}
 
-        <Button onClick={submit} disabled={busy || !email || !password || (mode === 'signup' && !name)} style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }}>
-          {busy ? 'Working…' : mode === 'signin' ? 'Sign in' : 'Create account'}
-        </Button>
-        <p style={{ fontSize: 12.5, color: 'var(--text-muted)', textAlign: 'center', margin: 0 }}>
-          {mode === 'signin' ? "New here?" : 'Already have an account?'}{' '}
-          <span style={{ color: 'var(--accent)', cursor: 'pointer' }} onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); }}>
-            {mode === 'signin' ? 'Create an account' : 'Sign in'}
-          </span>
-        </p>
-      </Card>
+          <Button onClick={submit} disabled={busy || !email || !password || (mode === 'signup' && !name)} style={{ width: '100%', justifyContent: 'center', marginBottom: 10 }}>
+            {busy ? 'Working…' : mode === 'signin' ? 'Sign in' : 'Create account'}
+          </Button>
+          <p style={{ fontSize: 12.5, color: 'var(--text-muted)', textAlign: 'center', margin: 0 }}>
+            {mode === 'signin' ? "New here?" : 'Already have an account?'}{' '}
+            <span style={{ color: 'var(--accent)', cursor: 'pointer' }} onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); }}>
+              {mode === 'signin' ? 'Create an account' : 'Sign in'}
+            </span>
+          </p>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -576,13 +574,13 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
               <button type="button" onClick={() => setTastingType('ttt')} style={{
                 flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
                 border: `1px solid ${tastingType === 'ttt' ? 'var(--accent)' : 'var(--line)'}`,
-                background: tastingType === 'ttt' ? 'rgba(199,143,60,0.16)' : 'transparent',
+                background: tastingType === 'ttt' ? 'rgba(243,112,58,0.16)' : 'transparent',
                 color: tastingType === 'ttt' ? 'var(--accent)' : 'var(--text-muted)',
               }}>True to Type</button>
               <button type="button" onClick={() => setTastingType('retention')} style={{
                 flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
                 border: `1px solid ${tastingType === 'retention' ? 'var(--accent)' : 'var(--line)'}`,
-                background: tastingType === 'retention' ? 'rgba(199,143,60,0.16)' : 'transparent',
+                background: tastingType === 'retention' ? 'rgba(243,112,58,0.16)' : 'transparent',
                 color: tastingType === 'retention' ? 'var(--accent)' : 'var(--text-muted)',
               }}>Retention</button>
             </div>
@@ -611,7 +609,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
               <button key={sec} type="button" onClick={() => setActiveSection(sec)} style={{
                 flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
                 border: `1px solid ${activeSection === sec ? 'var(--accent)' : 'var(--line)'}`,
-                background: activeSection === sec ? 'rgba(199,143,60,0.16)' : 'transparent',
+                background: activeSection === sec ? 'rgba(243,112,58,0.16)' : 'transparent',
                 color: activeSection === sec ? 'var(--accent)' : 'var(--text-muted)',
               }}>{SECTION_LABELS[sec]}</button>
             ))}
@@ -628,7 +626,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
                   <button key={f} type="button" onClick={() => toggleOff(f)} style={{
                     fontSize: 12, padding: '6px 10px', borderRadius: 20, cursor: 'pointer',
                     border: `1px solid ${selected ? 'var(--bad)' : 'var(--line)'}`,
-                    background: selected ? 'rgba(196,90,68,0.16)' : 'transparent',
+                    background: selected ? 'rgba(184,71,43,0.16)' : 'transparent',
                     color: selected ? 'var(--bad)' : 'var(--text-muted)',
                   }}>{f}</button>
                 );
@@ -644,7 +642,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
                         <button key={n} type="button" onClick={() => setOffIntensity(flavor, n)} style={{
                           width: 24, height: 24, borderRadius: 5, fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-mono)',
                           border: `1px solid ${intensity === n ? 'var(--bad)' : 'var(--line)'}`,
-                          background: intensity === n ? 'rgba(196,90,68,0.28)' : 'transparent',
+                          background: intensity === n ? 'rgba(184,71,43,0.28)' : 'transparent',
                           color: intensity === n ? 'var(--bad)' : 'var(--text-muted)', fontWeight: intensity === n ? 700 : 400,
                         }}>{n}</button>
                       ))}
@@ -666,7 +664,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
                 <button key={v} type="button" onClick={() => setOverall(v)} style={{
                   flex: 1, padding: '9px 0', borderRadius: 7, textTransform: 'capitalize', fontWeight: 600, fontSize: 13, cursor: 'pointer',
                   border: `1px solid ${overall === v ? 'var(--accent)' : 'var(--line)'}`,
-                  background: overall === v ? 'rgba(199,143,60,0.16)' : 'transparent',
+                  background: overall === v ? 'rgba(243,112,58,0.16)' : 'transparent',
                   color: overall === v ? 'var(--accent)' : 'var(--text-muted)',
                 }}>{v}</button>
               ))}
@@ -770,13 +768,13 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
               <button type="button" onClick={() => setPanelType('ttt')} style={{
                 flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
                 border: `1px solid ${panelType === 'ttt' ? 'var(--accent)' : 'var(--line)'}`,
-                background: panelType === 'ttt' ? 'rgba(199,143,60,0.16)' : 'transparent',
+                background: panelType === 'ttt' ? 'rgba(243,112,58,0.16)' : 'transparent',
                 color: panelType === 'ttt' ? 'var(--accent)' : 'var(--text-muted)',
               }}>True to Type</button>
               <button type="button" onClick={() => setPanelType('retention')} style={{
                 flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
                 border: `1px solid ${panelType === 'retention' ? 'var(--accent)' : 'var(--line)'}`,
-                background: panelType === 'retention' ? 'rgba(199,143,60,0.16)' : 'transparent',
+                background: panelType === 'retention' ? 'rgba(243,112,58,0.16)' : 'transparent',
                 color: panelType === 'retention' ? 'var(--accent)' : 'var(--text-muted)',
               }}>Retention</button>
             </div>
@@ -1083,13 +1081,13 @@ function BriteBatchCard({ batch, store, currentProfile }) {
             <button type="button" onClick={() => setDecision('green')} style={{
               flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
               border: `1px solid ${decision === 'green' ? 'var(--good)' : 'var(--line)'}`,
-              background: decision === 'green' ? 'rgba(122,157,122,0.18)' : 'transparent',
+              background: decision === 'green' ? 'rgba(114,149,107,0.18)' : 'transparent',
               color: decision === 'green' ? 'var(--good)' : 'var(--text-muted)',
             }}>Green light</button>
             <button type="button" onClick={() => setDecision('red')} style={{
               flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
               border: `1px solid ${decision === 'red' ? 'var(--bad)' : 'var(--line)'}`,
-              background: decision === 'red' ? 'rgba(196,90,68,0.18)' : 'transparent',
+              background: decision === 'red' ? 'rgba(184,71,43,0.18)' : 'transparent',
               color: decision === 'red' ? 'var(--bad)' : 'var(--text-muted)',
             }}>Red light</button>
           </div>
@@ -1177,7 +1175,7 @@ function BatchReportModal({ batch, store, onClose }) {
             {checkpoints.length === 0 ? <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>No retention checkpoints.</p> : (
               <div style={{ display: 'flex', gap: 8 }}>
                 {checkpoints.map(c => (
-                  <span key={c.id} style={{ fontSize: 12, fontFamily: 'var(--font-mono)', padding: '4px 10px', borderRadius: 5, background: c.assessed ? 'rgba(122,157,122,0.16)' : 'var(--surface-2)', color: c.assessed ? 'var(--good)' : 'var(--text-muted)' }}>
+                  <span key={c.id} style={{ fontSize: 12, fontFamily: 'var(--font-mono)', padding: '4px 10px', borderRadius: 5, background: c.assessed ? 'rgba(114,149,107,0.16)' : 'var(--surface-2)', color: c.assessed ? 'var(--good)' : 'var(--text-muted)' }}>
                     Day {c.days} — {c.assessed ? 'Assessed' : `due ${c.due_date}`}
                   </span>
                 ))}
@@ -1288,7 +1286,7 @@ function BatchesView({ store, isLead }) {
               </div>
               <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                 {checkpoints.map(r => (
-                  <span key={r.id} title={`Day ${r.days} — ${r.due_date}`} style={{ fontSize: 11, fontFamily: 'var(--font-mono)', padding: '3px 8px', borderRadius: 4, background: r.assessed ? 'rgba(122,157,122,0.16)' : 'var(--surface-2)', color: r.assessed ? 'var(--good)' : 'var(--text-faint)' }}>D{r.days} {r.assessed ? '✓' : ''}</span>
+                  <span key={r.id} title={`Day ${r.days} — ${r.due_date}`} style={{ fontSize: 11, fontFamily: 'var(--font-mono)', padding: '3px 8px', borderRadius: 4, background: r.assessed ? 'rgba(114,149,107,0.16)' : 'var(--surface-2)', color: r.assessed ? 'var(--good)' : 'var(--text-faint)' }}>D{r.days} {r.assessed ? '✓' : ''}</span>
                 ))}
               </div>
             </Card>
@@ -1334,7 +1332,7 @@ function SkuEditor({ sku, onCancel, onSave, busy }) {
             <button key={sec} type="button" onClick={() => setActiveSection(sec)} style={{
               flex: 1, padding: '8px 0', borderRadius: 7, fontWeight: 700, fontSize: 12.5, cursor: 'pointer',
               border: `1px solid ${activeSection === sec ? 'var(--accent)' : 'var(--line)'}`,
-              background: activeSection === sec ? 'rgba(199,143,60,0.16)' : 'transparent',
+              background: activeSection === sec ? 'rgba(243,112,58,0.16)' : 'transparent',
               color: activeSection === sec ? 'var(--accent)' : 'var(--text-muted)',
             }}>{SECTION_LABELS[sec]}</button>
           ))}
@@ -1376,7 +1374,7 @@ function SkuProfiles({ store, isLead }) {
               <button key={sec} type="button" onClick={() => setPreviewSection(sec)} style={{
                 padding: '6px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
                 border: `1px solid ${previewSection === sec ? 'var(--accent)' : 'var(--line)'}`,
-                background: previewSection === sec ? 'rgba(199,143,60,0.16)' : 'transparent',
+                background: previewSection === sec ? 'rgba(243,112,58,0.16)' : 'transparent',
                 color: previewSection === sec ? 'var(--accent)' : 'var(--text-muted)',
               }}>{SECTION_LABELS[sec]}</button>
             ))}
@@ -1671,7 +1669,7 @@ function TrendsView({ store }) {
               <button key={b.id} type="button" disabled={disabled} onClick={() => toggleCompare(b.id)} style={{
                 fontSize: 12, padding: '6px 10px', borderRadius: 20, cursor: disabled ? 'not-allowed' : 'pointer',
                 border: `1px solid ${selected ? 'var(--accent)' : 'var(--line)'}`,
-                background: selected ? 'rgba(199,143,60,0.16)' : 'transparent',
+                background: selected ? 'rgba(243,112,58,0.16)' : 'transparent',
                 color: selected ? 'var(--accent)' : disabled ? 'var(--text-faint)' : 'var(--text-muted)',
                 opacity: disabled ? 0.5 : 1,
               }}>{b.batch_number}</button>
@@ -1687,7 +1685,7 @@ function TrendsView({ store }) {
                 <button key={sec} type="button" onClick={() => setCompareSection(sec)} style={{
                   flex: 1, padding: '8px 0', borderRadius: 7, fontWeight: 700, fontSize: 12.5, cursor: 'pointer',
                   border: `1px solid ${compareSection === sec ? 'var(--accent)' : 'var(--line)'}`,
-                  background: compareSection === sec ? 'rgba(199,143,60,0.16)' : 'transparent',
+                  background: compareSection === sec ? 'rgba(243,112,58,0.16)' : 'transparent',
                   color: compareSection === sec ? 'var(--accent)' : 'var(--text-muted)',
                 }}>{SECTION_LABELS[sec]}</button>
               ))}
@@ -1971,9 +1969,10 @@ export default function App() {
   useEffect(() => { if (!tabs.find(t => t.id === tab)) setTab('panels'); }, [isLead]);
 
   const themeVars = {
-    '--bg': '#17140F', '--surface': '#1F1B15', '--surface-2': '#28221A', '--line': '#3A3226',
-    '--text': '#EDE6D6', '--text-muted': '#A79E8D', '--text-faint': '#6B6355',
-    '--accent': '#C78F3C', '--good': '#7A9D7A', '--bad': '#C45A44',
+    '--bg': '#F2EDE2', '--surface': '#FFFFFF', '--surface-2': '#ECE3D1', '--line': '#DDD2BA',
+    '--text': '#141A24', '--text-muted': '#5F6B5A', '--text-faint': '#93998C',
+    '--accent': '#F3703A', '--good': '#72956B', '--bad': '#B8472B',
+    '--navy': '#141A24', '--forest': '#2F4534', '--teal': '#00687D', '--teal-dark': '#06282E', '--gold': '#BE9C5D',
     '--font-display': "'Fraunces', serif", '--font-body': "'Inter', sans-serif", '--font-mono': "'IBM Plex Mono', monospace",
   };
 
@@ -2008,21 +2007,17 @@ export default function App() {
         }
       `}</style>
 
-      <header style={{ borderBottom: '1px solid var(--line)', padding: '18px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Beaker size={18} color="#1a1410" />
-          </div>
-          <div>
-            <p style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 19, fontWeight: 700, lineHeight: 1 }}>Panel</p>
-            <p style={{ margin: 0, fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', letterSpacing: 0.5 }}>SENSORY LOG</p>
-          </div>
+      <header style={{ background: 'var(--navy)', padding: '16px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <img src="/logo-cream.png" alt="Margaret River Beer Co" style={{ height: 28, width: 'auto' }} />
+          <div style={{ width: 1, height: 22, background: 'rgba(242,237,226,0.25)' }} />
+          <p style={{ margin: 0, fontSize: 11, color: 'rgba(242,237,226,0.6)', fontFamily: 'var(--font-mono)', letterSpacing: 0.8, textTransform: 'uppercase' }}>Sensory Log</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <User size={15} color="var(--text-faint)" />
-          <span style={{ fontSize: 13.5 }}>{profile.name}</span>
+          <User size={15} color="rgba(242,237,226,0.6)" />
+          <span style={{ fontSize: 13.5, color: 'var(--bg)' }}>{profile.name}</span>
           <Pill tone={isLead ? 'good' : 'neutral'}>{isLead ? 'QA Lead' : 'Staff'}</Pill>
-          <Button variant="ghost" onClick={() => supabase.auth.signOut()} style={{ padding: '6px 10px', fontSize: 12 }}><LogOut size={13} /> Sign out</Button>
+          <Button variant="ghost" onClick={() => supabase.auth.signOut()} style={{ padding: '6px 10px', fontSize: 12, color: 'var(--bg)', borderColor: 'rgba(242,237,226,0.3)' }}><LogOut size={13} /> Sign out</Button>
         </div>
       </header>
 
