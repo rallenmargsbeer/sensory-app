@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, LogOut, TrendingUp } from 'lucide-react';
+import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, LogOut, TrendingUp, Droplet } from 'lucide-react';
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
 
@@ -43,7 +43,9 @@ const TRAIT_TAXONOMY = {
 
 const SECTION_LABELS = { aroma: 'Aroma', flavor: 'Flavour & Body' };
 
-// Only these exact names get imported — anything else is ignored.
+// The only beers we build TTT profiles for — everything else that ends up
+// in `skus` (e.g. from auto-sync picking up one-offs or stray tab names)
+// gets filtered out of this view, not deleted.
 const CORE_BEERS = ['Drift', 'Pale', 'Kolsch', 'River Dog', 'In The Pines', 'Red IPA', 'Mermid', 'Stout', 'Brown', 'Draught'];
 
 function defaultSectionScores(section) {
@@ -95,6 +97,7 @@ function useSupabaseData(session) {
   const [sessions, setSessions] = useState([]);
   const [panels, setPanels] = useState([]);
   const [panelBatches, setPanelBatches] = useState([]);
+  const [briteChecks, setBriteChecks] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -102,13 +105,14 @@ function useSupabaseData(session) {
   const loadAll = async () => {
     setLoading(true); setError(null);
     try {
-      const [s, b, r, se, p, pb, pr] = await Promise.all([
+      const [s, b, r, se, p, pb, bc, pr] = await Promise.all([
         supabase.from('skus').select('*'),
         supabase.from('batches').select('*'),
         supabase.from('retention_checkpoints').select('*'),
         supabase.from('sessions').select('*'),
         supabase.from('panels').select('*'),
         supabase.from('panel_batches').select('*'),
+        supabase.from('brite_checks').select('*'),
         supabase.from('profiles').select('*'),
       ]);
       if (s.error) throw s.error;
@@ -118,6 +122,7 @@ function useSupabaseData(session) {
       setSessions(se.data || []);
       setPanels(p.data || []);
       setPanelBatches(pb.data || []);
+      setBriteChecks(bc.data || []);
       setProfiles(pr.data || []);
     } catch (e) {
       setError(e.message || 'Failed to load data.');
@@ -165,13 +170,27 @@ function useSupabaseData(session) {
 
   // Imports batches directly from parsed sheet rows: creates any missing
   // SKUs, creates/updates batches, sets up retention checkpoints. Used by
-  // the Batches tab importer. Returns a summary of what happened.
+  // the Batches tab importer. Batches with no packaged date still get
+  // imported (they'll show up in Packaging Sign Off instead of the main
+  // flow) but don't get retention checkpoints until they graduate.
   const importBatches = async (rows) => {
-    let added = 0, skipped = 0;
+    let added = 0, skipped = 0, graduated = 0;
     for (const row of rows) {
-      if (!row.packagedDate) { skipped++; continue; } // not yet packaged (or kegged, not canned) — don't import
       const existing = batches.find(b => b.batch_number === row.batchNumber);
-      if (existing) { skipped++; continue; }
+      if (existing) {
+        if (!existing.package_date && row.packagedDate) {
+          const { error: updateErr } = await supabase.from('batches').update({ package_date: row.packagedDate }).eq('id', existing.id);
+          if (updateErr) throw updateErr;
+          const checkpoints = RETENTION_INTERVALS.map(days => ({
+            batch_id: existing.id, days, due_date: addDays(row.packagedDate, days), assessed: false,
+          }));
+          await supabase.from('retention_checkpoints').insert(checkpoints);
+          graduated++;
+        } else {
+          skipped++;
+        }
+        continue;
+      }
 
       let sku = skus.find(s => s.name.toLowerCase() === row.skuName.toLowerCase());
       if (!sku) {
@@ -185,17 +204,19 @@ function useSupabaseData(session) {
         skus.push(sku); // keep local lookup current within this loop
       }
 
-      const packageDate = row.packagedDate;
+      const packageDate = row.packagedDate || null;
       const { data: newBatch, error: batchErr } = await supabase.from('batches').insert({
         sku_id: sku.id, batch_number: row.batchNumber, package_date: packageDate, format: 'Can',
       }).select().single();
       if (batchErr) throw batchErr;
       batches.push(newBatch);
 
-      const checkpoints = RETENTION_INTERVALS.map(days => ({
-        batch_id: newBatch.id, days, due_date: addDays(packageDate, days), assessed: false,
-      }));
-      await supabase.from('retention_checkpoints').insert(checkpoints);
+      if (packageDate) {
+        const checkpoints = RETENTION_INTERVALS.map(days => ({
+          batch_id: newBatch.id, days, due_date: addDays(packageDate, days), assessed: false,
+        }));
+        await supabase.from('retention_checkpoints').insert(checkpoints);
+      }
       added++;
     }
     await loadAll();
@@ -222,10 +243,18 @@ function useSupabaseData(session) {
     await loadAll();
   };
 
+  const addBriteCheck = async ({ batchId, decision, notes }) => {
+    const { error } = await supabase.from('brite_checks').insert({
+      batch_id: batchId, taster_id: session.user.id, date: todayISO(), decision, notes: notes || '',
+    });
+    if (error) throw error;
+    await loadAll();
+  };
+
   return {
-    skus, batches, retention, sessions, panels, panelBatches, profiles, profileName,
+    skus, batches, retention, sessions, panels, panelBatches, briteChecks, profiles, profileName,
     loading, error, reload: loadAll,
-    addSku, updateSku, addBatch, addSession, createPanel, importBatches,
+    addSku, updateSku, addBatch, addSession, createPanel, importBatches, addBriteCheck,
   };
 }
 
@@ -478,7 +507,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
 
           <Field label="Batch">
             <select style={inputStyle} value={batchId} onChange={e => { setBatchId(e.target.value); setRetentionCheckpointId(''); }}>
-              {store.batches.map(b => {
+              {store.batches.filter(b => b.package_date).map(b => {
                 const s = store.skus.find(sk => sk.id === b.sku_id);
                 return <option key={b.id} value={b.id}>{b.batch_number} — {s ? s.name : 'Unknown SKU'}</option>;
               })}
@@ -508,7 +537,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId }) {
           <TraitSectionEditor section={activeSection} scores={scores[activeSection]} onChange={(id, v) => setTraitScore(activeSection, id, v)}
             target={sku ? sku.target[activeSection] : null} tolerance={sku ? sku.tolerance : 2} />
 
-                    <Field label="Off-flavors detected">
+          <Field label="Off-flavors detected">
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: offFlavors.length > 0 ? 10 : 0 }}>
               {OFF_FLAVORS.map(f => {
                 const selected = offFlavors.some(x => x.flavor === f);
@@ -631,7 +660,7 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
           <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 8 }}>Select batches ({selected.length} chosen)</p>
           {store.batches.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>No batches yet — add some on the Batches tab first.</p>}
           <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 14 }}>
-            {store.batches.map(b => {
+            {store.batches.filter(b => b.package_date).map(b => {
               const sku = store.skus.find(s => s.id === b.sku_id);
               return (
                 <label key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 6, cursor: 'pointer', background: selected.includes(b.id) ? 'var(--surface-2)' : 'transparent' }}>
@@ -760,7 +789,7 @@ function ImportBatchesModal({ store, onClose }) {
         dateBrewed: (r['Date Brewed'] || '').trim(),
         packagedDate: (r['Packaged Date'] || r['Package Date'] || '').trim(),
       }))
-      .filter(r => r.batchNumber && /^\d+$/.test(r.batchNumber) && r.skuName && CORE_BEERS.includes(r.skuName) && r.packagedDate);
+      .filter(r => r.batchNumber && /^\d+$/.test(r.batchNumber) && r.skuName && CORE_BEERS.includes(r.skuName));
     setBusy(true); setError('');
     try {
       const summary = await store.importBatches(rows);
@@ -804,6 +833,105 @@ function ImportBatchesModal({ store, onClose }) {
         )}
       </div>
     </div>
+  );
+}
+
+function PackagingSignOffView({ store, currentProfile }) {
+  const briteBatches = useMemo(() =>
+    store.batches
+      .filter(b => !b.package_date)
+      .sort((a, b) => Number(b.batch_number) - Number(a.batch_number)),
+    [store.batches]
+  );
+
+  return (
+    <div>
+      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Packaging sign off</h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: '0 0 20px' }}>Batches sitting in Brite tank, awaiting clearance to package. Taste and give it a green or red light.</p>
+
+      {briteBatches.length === 0 ? (
+        <p style={{ color: 'var(--text-muted)' }}>Nothing waiting on sign off right now.</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {briteBatches.map(b => (
+            <BriteBatchCard key={b.id} batch={b} store={store} currentProfile={currentProfile} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BriteBatchCard({ batch, store, currentProfile }) {
+  const sku = store.skus.find(s => s.id === batch.sku_id);
+  const checks = store.briteChecks.filter(c => c.batch_id === batch.id).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const latest = checks[0];
+
+  const [logging, setLogging] = useState(false);
+  const [decision, setDecision] = useState('green');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await store.addBriteCheck({ batchId: batch.id, decision, notes });
+      setLogging(false); setNotes(''); setDecision('green');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+        <div>
+          <p style={{ margin: 0, fontWeight: 700, fontSize: 15 }}>{batch.batch_number} — {sku ? sku.name : 'Unknown SKU'}</p>
+          <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--text-muted)' }}>{checks.length} check{checks.length !== 1 ? 's' : ''} logged</p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {latest ? (
+            <Pill tone={latest.decision === 'green' ? 'good' : 'bad'}>{latest.decision === 'green' ? 'Green light' : 'Red light'}</Pill>
+          ) : (
+            <Pill tone="warn">Pending</Pill>
+          )}
+          <Button variant="ghost" onClick={() => setLogging(v => !v)} style={{ fontSize: 12.5, padding: '7px 12px' }}>Log check</Button>
+        </div>
+      </div>
+
+      {logging && (
+        <div style={{ background: 'var(--surface-2)', borderRadius: 8, padding: 14, marginBottom: checks.length > 0 ? 12 : 0 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <button type="button" onClick={() => setDecision('green')} style={{
+              flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+              border: `1px solid ${decision === 'green' ? 'var(--good)' : 'var(--line)'}`,
+              background: decision === 'green' ? 'rgba(122,157,122,0.18)' : 'transparent',
+              color: decision === 'green' ? 'var(--good)' : 'var(--text-muted)',
+            }}>Green light</button>
+            <button type="button" onClick={() => setDecision('red')} style={{
+              flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+              border: `1px solid ${decision === 'red' ? 'var(--bad)' : 'var(--line)'}`,
+              background: decision === 'red' ? 'rgba(196,90,68,0.18)' : 'transparent',
+              color: decision === 'red' ? 'var(--bad)' : 'var(--text-muted)',
+            }}>Red light</button>
+          </div>
+          <textarea style={{ ...inputStyle, minHeight: 60, fontFamily: 'var(--font-body)', marginBottom: 10 }}
+            value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes" />
+          <Button onClick={submit} disabled={busy} style={{ fontSize: 12.5 }}>{busy ? 'Saving…' : 'Submit check'}</Button>
+        </div>
+      )}
+
+      {checks.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {checks.map(c => (
+            <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, borderTop: '1px solid var(--line)', paddingTop: 6 }}>
+              <span style={{ color: 'var(--text-muted)' }}>{store.profileName(c.taster_id)} · {c.date}{c.notes ? ` — "${c.notes}"` : ''}</span>
+              <Pill tone={c.decision === 'green' ? 'good' : 'bad'}>{c.decision === 'green' ? 'Green' : 'Red'}</Pill>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -865,7 +993,7 @@ function BatchesView({ store, isLead }) {
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {store.batches.map(b => {
+        {store.batches.filter(b => b.package_date).map(b => {
           const sku = store.skus.find(s => s.id === b.sku_id);
           const sessions = store.sessions.filter(s => s.batch_id === b.id);
           const flagged = sessions.filter(s => s.overall !== 'pass').length;
@@ -980,7 +1108,7 @@ function SkuProfiles({ store, isLead }) {
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
-        {store.skus.map(sku => {
+        {store.skus.filter(sku => CORE_BEERS.includes(sku.name)).map(sku => {
           const target = normalizeTarget(sku.target);
           return (
             <Card key={sku.id}>
@@ -1225,7 +1353,9 @@ function TrendsView({ store }) {
       </Card>
     </div>
   );
-}function Dashboard({ store }) {
+}
+
+function Dashboard({ store }) {
   const today = todayISO();
   const overdue = store.retention.filter(r => !r.assessed && r.due_date < today);
   const recent = [...store.sessions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
@@ -1248,7 +1378,7 @@ function TrendsView({ store }) {
       </div>
       <div style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
         {stat('SKUs tracked', store.skus.length)}
-        {stat('Active batches', store.batches.length)}
+        {stat('Active batches', store.batches.filter(b => b.package_date).length)}
         {stat('Overdue retention', overdue.length, overdue.length > 0 ? 'var(--bad)' : 'var(--good)')}
         {stat('Total tastings logged', store.sessions.length)}
       </div>
@@ -1324,6 +1454,7 @@ export default function App() {
   const tabs = [
     { id: 'panels', label: 'Panels', icon: Users, allowed: true },
     { id: 'submit', label: 'Submit tasting', icon: ClipboardList, allowed: true },
+    { id: 'brite', label: 'Packaging sign off', icon: Droplet, allowed: true },
     { id: 'retention', label: 'Retention queue', icon: Archive, allowed: true },
     { id: 'batches', label: 'Batches', icon: Beaker, allowed: true },
     { id: 'skus', label: 'TTT profiles', icon: Settings, allowed: true },
@@ -1399,6 +1530,7 @@ export default function App() {
         <main style={{ flex: 1, padding: '28px 32px', maxWidth: 1180 }}>
           {tab === 'panels' && <PanelsView store={store} isLead={isLead} currentProfile={profile} onLogTasting={(bid) => { setPresetBatchId(bid); setTab('submit'); }} />}
           {tab === 'submit' && <TastingForm store={store} currentProfile={profile} onDone={() => setTab('panels')} presetBatchId={presetBatchId} />}
+          {tab === 'brite' && <PackagingSignOffView store={store} currentProfile={profile} />}
           {tab === 'retention' && <RetentionQueue store={store} onLogTasting={(bid) => { setPresetBatchId(bid); setTab('submit'); }} />}
           {tab === 'batches' && <BatchesView store={store} isLead={isLead} />}
           {tab === 'skus' && <SkuProfiles store={store} isLead={isLead} />}
