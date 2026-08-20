@@ -370,6 +370,33 @@ function TraitSpiderChart({ section, target, actual, height = 420 }) {
   );
 }
 
+const COMPARE_COLORS = ['var(--accent)', '#7A9CC6', '#B98CC7'];
+
+function MultiBatchSpiderChart({ section, target, series, height = 420 }) {
+  // series: [{ label, scores }] — up to 3
+  const labels = traitLabelsFor(section);
+  const chartData = TRAIT_TAXONOMY[section].flatMap(g => g.traits.map(t => {
+    const id = traitId(g.category, t);
+    const row = { trait: labels[id], Target: target ? (target[id] ?? 1) : 0 };
+    series.forEach(s => { row[s.label] = s.scores ? (s.scores[id] ?? 1) : 1; });
+    return row;
+  }));
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <RadarChart data={chartData} outerRadius="78%">
+        <PolarGrid stroke="var(--line)" />
+        <PolarAngleAxis dataKey="trait" tick={{ fill: 'var(--text-muted)', fontSize: 10.5, fontFamily: 'var(--font-mono)' }} />
+        <PolarRadiusAxis domain={[0, 9]} tick={false} axisLine={false} />
+        {target && <Radar name="TTT Target" dataKey="Target" stroke="var(--text-faint)" strokeDasharray="4 3" fill="var(--text-faint)" fillOpacity={0.04} />}
+        {series.map((s, i) => (
+          <Radar key={s.label} name={s.label} dataKey={s.label} stroke={COMPARE_COLORS[i % COMPARE_COLORS.length]} fill={COMPARE_COLORS[i % COMPARE_COLORS.length]} fillOpacity={0.15} strokeWidth={2} />
+        ))}
+        <Legend wrapperStyle={{ fontSize: 12, fontFamily: 'var(--font-body)' }} />
+      </RadarChart>
+    </ResponsiveContainer>
+  );
+}
+
 function TraitSectionEditor({ section, scores, onChange, target, tolerance }) {
   return (
     <div>
@@ -1458,6 +1485,36 @@ function TrendsView({ store }) {
       .slice(0, 8);
   }, [sku, store.batches, ttSessions]);
 
+  const [compareBatchIds, setCompareBatchIds] = useState([]);
+  const [compareSection, setCompareSection] = useState('aroma');
+
+  const skuBatchOptions = useMemo(() =>
+    store.batches.filter(b => sku && b.sku_id === sku.id && b.package_date).sort((a, b) => Number(b.batch_number) - Number(a.batch_number)),
+    [store.batches, sku]
+  );
+
+  useEffect(() => { setCompareBatchIds([]); }, [skuId]);
+
+  const toggleCompare = (batchId) => setCompareBatchIds(prev => {
+    if (prev.includes(batchId)) return prev.filter(id => id !== batchId);
+    if (prev.length >= 3) return prev;
+    return [...prev, batchId];
+  });
+
+  const compareSeries = useMemo(() => {
+    return compareBatchIds.map(batchId => {
+      const batch = store.batches.find(b => b.id === batchId);
+      const batchSessions = ttSessions.filter(s => s.batch_id === batchId);
+      const scores = {};
+      TRAIT_TAXONOMY[compareSection].forEach(g => g.traits.forEach(t => {
+        const id = traitId(g.category, t);
+        const vals = batchSessions.map(s => s.scores?.[compareSection]?.[id]).filter(v => v != null);
+        scores[id] = vals.length > 0 ? vals.reduce((a, c) => a + c, 0) / vals.length : 1;
+      }));
+      return { label: batch ? batch.batch_number : batchId, scores };
+    });
+  }, [compareBatchIds, ttSessions, compareSection, store.batches]);
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -1489,7 +1546,7 @@ function TrendsView({ store }) {
         )}
       </Card>
 
-      <Card>
+      <Card style={{ marginBottom: 20 }}>
         <p style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Biggest deviating traits</p>
         <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--text-faint)' }}>Averaged across every tasting of {sku ? sku.name : 'this SKU'} — the traits most consistently off target.</p>
         {topDeviators.length === 0 ? (
@@ -1505,9 +1562,48 @@ function TrendsView({ store }) {
           </div>
         )}
       </Card>
+
+      <Card>
+        <p style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Compare batches</p>
+        <p style={{ margin: '0 0 14px', fontSize: 12.5, color: 'var(--text-faint)' }}>Pick up to 3 batches of {sku ? sku.name : 'this SKU'} to overlay on one spider diagram.</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+          {skuBatchOptions.map(b => {
+            const selected = compareBatchIds.includes(b.id);
+            const disabled = !selected && compareBatchIds.length >= 3;
+            return (
+              <button key={b.id} type="button" disabled={disabled} onClick={() => toggleCompare(b.id)} style={{
+                fontSize: 12, padding: '6px 10px', borderRadius: 20, cursor: disabled ? 'not-allowed' : 'pointer',
+                border: `1px solid ${selected ? 'var(--accent)' : 'var(--line)'}`,
+                background: selected ? 'rgba(199,143,60,0.16)' : 'transparent',
+                color: selected ? 'var(--accent)' : disabled ? 'var(--text-faint)' : 'var(--text-muted)',
+                opacity: disabled ? 0.5 : 1,
+              }}>{b.batch_number}</button>
+            );
+          })}
+          {skuBatchOptions.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>No packaged batches of this SKU yet.</p>}
+        </div>
+
+        {compareBatchIds.length > 0 && (
+          <>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+              {Object.keys(SECTION_LABELS).map(sec => (
+                <button key={sec} type="button" onClick={() => setCompareSection(sec)} style={{
+                  flex: 1, padding: '8px 0', borderRadius: 7, fontWeight: 700, fontSize: 12.5, cursor: 'pointer',
+                  border: `1px solid ${compareSection === sec ? 'var(--accent)' : 'var(--line)'}`,
+                  background: compareSection === sec ? 'rgba(199,143,60,0.16)' : 'transparent',
+                  color: compareSection === sec ? 'var(--accent)' : 'var(--text-muted)',
+                }}>{SECTION_LABELS[sec]}</button>
+              ))}
+            </div>
+            <MultiBatchSpiderChart section={compareSection} target={sku ? normalizeTarget(sku.target)[compareSection] : null} series={compareSeries} height={400} />
+          </>
+        )}
+      </Card>
     </div>
   );
 }
+
+
 
 function Dashboard({ store, onEditSession }) {
   const today = todayISO();
