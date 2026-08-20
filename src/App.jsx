@@ -871,17 +871,19 @@ function BriteBatchCard({ batch, store, currentProfile }) {
   const [decision, setDecision] = useState('green');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   const submit = async () => {
-    setBusy(true);
+    setBusy(true); setError('');
     try {
       await store.addBriteCheck({ batchId: batch.id, decision, notes });
       setLogging(false); setNotes(''); setDecision('green');
+    } catch (e) {
+      setError(e.message || 'Could not save — try again.');
     } finally {
       setBusy(false);
     }
   };
-
   return (
     <Card>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
@@ -917,6 +919,7 @@ function BriteBatchCard({ batch, store, currentProfile }) {
           </div>
           <textarea style={{ ...inputStyle, minHeight: 60, fontFamily: 'var(--font-body)', marginBottom: 10 }}
             value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes" />
+          {error && <p style={{ color: 'var(--bad)', fontSize: 12.5, marginBottom: 8 }}>{error}</p>}
           <Button onClick={submit} disabled={busy} style={{ fontSize: 12.5 }}>{busy ? 'Saving…' : 'Submit check'}</Button>
         </div>
       )}
