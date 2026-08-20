@@ -298,8 +298,8 @@ const Pill = ({ children, tone = 'neutral' }) => {
   return <span style={{ ...tones[tone], fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 20, letterSpacing: 0.3, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>{children}</span>;
 };
 
-const Card = ({ children, style }) => (
-  <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 10, padding: 20, ...style }}>{children}</div>
+const Card = ({ children, style, className }) => (
+  <div className={className} style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 10, padding: 20, ...style }}>{children}</div>
 );
 
 const Button = ({ children, onClick, variant = 'primary', style, type = 'button', disabled }) => {
@@ -473,7 +473,7 @@ function AuthScreen() {
     <div style={{ minHeight: '100vh', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: 'var(--navy)' }}>
       <div style={{ position: 'absolute', inset: 0, backgroundImage: 'url(/pattern-bg.jpg)', backgroundSize: 'cover', backgroundPosition: 'center', opacity: 0.16 }} />
       <div style={{ position: 'relative', zIndex: 1 }}>
-        <Card style={{ width: 360 }}>
+        <Card className="modal-card" style={{ width: 360 }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 22 }}>
             <img src="/logo-green.png" alt="Margaret River Beer Co" style={{ height: 40, width: 'auto', marginBottom: 8 }} />
             <p style={{ margin: 0, fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', letterSpacing: 0.8, textTransform: 'uppercase' }}>Sensory Log</p>
@@ -554,7 +554,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
       <Card style={{ marginBottom: 20 }}>
         <h4 style={{ margin: '0 0 2px', fontFamily: 'var(--font-display)', fontSize: 18 }}>{sku ? sku.name : 'No SKU selected'}</h4>
         <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--text-muted)' }}>{sku ? `${sku.style} · ${sku.abv}% ABV` : ''}</p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+        <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
           {Object.keys(SECTION_LABELS).map(sec => (
             <div key={sec}>
               <p style={{ margin: '0 0 4px', fontSize: 12, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', textAlign: 'center' }}>{SECTION_LABELS[sec]}</p>
@@ -564,7 +564,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
         </div>
       </Card>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: 24 }}>
+      <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: 24 }}>
         <Card>
           <h3 style={{ margin: '0 0 4px', fontFamily: 'var(--font-display)', fontSize: 20 }}>{editSession ? 'Edit tasting' : 'Log a tasting'}</h3>
           <p style={{ margin: '0 0 20px', color: 'var(--text-muted)', fontSize: 13 }}>Tasting as <strong style={{ color: 'var(--text)' }}>{currentProfile.name}</strong></p>
@@ -749,7 +749,7 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+      <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Sensory panels</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>{isLead ? 'Build a panel by picking which batches need tasting.' : 'Work through your assigned panel one batch at a time.'}</p>
@@ -759,7 +759,7 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
 
       {building && (
         <Card style={{ marginBottom: 20 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+          <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
             <Field label="Date"><input type="date" style={inputStyle} value={date} onChange={e => setDate(e.target.value)} /></Field>
             <Field label="Label (optional)"><input style={inputStyle} value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Tuesday panel" /></Field>
           </div>
@@ -931,7 +931,7 @@ function ImportBatchesModal({ store, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 20 }}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: 24, width: 560 }}>
+      <div className="modal-card" style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: 24, width: 560 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
           <h3 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 18 }}>Import batches from a sheet</h3>
           <X size={18} style={{ cursor: 'pointer', color: 'var(--text-muted)' }} onClick={onClose} />
@@ -1132,8 +1132,8 @@ function BatchReportModal({ batch, store, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 60, padding: '32px 20px', overflowY: 'auto' }}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: 32, width: 760, maxWidth: '100%' }}>
-        <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+      <div className="modal-card" style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: 32, width: 760, maxWidth: '100%' }}>
+        <div className="no-print header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <Button variant="ghost" onClick={onClose}><X size={15} /> Close</Button>
           <Button onClick={() => window.print()}><Upload size={15} style={{ transform: 'rotate(180deg)' }} /> Print / Save as PDF</Button>
         </div>
@@ -1160,7 +1160,7 @@ function BatchReportModal({ batch, store, onClose }) {
           )}
 
           {sku && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+            <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
               {Object.keys(SECTION_LABELS).map(sec => (
                 <div key={sec}>
                   <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', textAlign: 'center' }}>{SECTION_LABELS[sec]} (avg vs target)</p>
@@ -1232,7 +1232,7 @@ function BatchesView({ store, isLead }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+      <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Batches</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>Packaged batches and their tasting history.</p>
@@ -1250,7 +1250,7 @@ function BatchesView({ store, isLead }) {
 
       {showNew && (
         <Card style={{ marginBottom: 20 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 12, alignItems: 'end' }}>
+          <div className="batch-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 12, alignItems: 'end' }}>
             <Field label="SKU"><select style={inputStyle} value={form.skuId} onChange={e => setForm(f => ({ ...f, skuId: e.target.value }))}>
               {store.skus.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select></Field>
@@ -1306,7 +1306,7 @@ function SkuEditor({ sku, onCancel, onSave, busy }) {
   const setTraitTarget = (section, id, v) => setS(x => ({ ...x, target: { ...x.target, [section]: { ...x.target[section], [id]: v } } }));
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: 24 }}>
+    <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: 24 }}>
       <Card>
         <h3 style={{ margin: '0 0 16px', fontFamily: 'var(--font-display)', fontSize: 18 }}>{sku.name ? `Edit ${sku.name}` : 'New SKU'}</h3>
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
@@ -1363,7 +1363,7 @@ function SkuProfiles({ store, isLead }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+      <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>True-to-type profiles</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>What "correct" looks like for each SKU.</p>
@@ -1612,7 +1612,7 @@ function TrendsView({ store }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+      <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Trends</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>How far off target each batch has run, over time. True to Type tastings only — retention tastings are excluded, since aging is expected to change a beer over time.</p>
@@ -1863,13 +1863,13 @@ function Dashboard({ store, onEditSession }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+      <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: 0 }}>Dashboard</h3>
         <Button variant="ghost" onClick={() => exportSessionsCSV(store)} disabled={store.sessions.length === 0}>
           <Upload size={15} style={{ transform: 'rotate(180deg)' }} /> Export all tastings (CSV)
         </Button>
       </div>
-      <div style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
+      <div className="dashboard-stats" style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
         {stat('SKUs tracked', store.skus.length)}
         {stat('Active batches', store.batches.filter(b => b.package_date).length)}
         {stat('Overdue retention', overdue.length, overdue.length > 0 ? 'var(--bad)' : 'var(--good)')}
@@ -1877,7 +1877,7 @@ function Dashboard({ store, onEditSession }) {
       </div>
       <SkuHealthScoreboard store={store} />
       <TasterCalibration store={store} />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+      <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
         <Card>
           <p style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Recent submissions</p>
           {recent.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>Nothing logged yet.</p>}
@@ -2005,9 +2005,27 @@ export default function App() {
           #batch-report-printable { position: absolute; top: 0; left: 0; width: 100%; background: white; color: black; }
           .no-print { display: none !important; }
         }
+        @media (max-width: 768px) {
+          .app-header { padding: 12px 14px !important; }
+          .app-shell { flex-direction: column !important; }
+          .app-nav {
+            width: 100% !important; border-right: none !important; border-bottom: 1px solid var(--line);
+            display: flex !important; flex-direction: row !important; overflow-x: auto;
+            padding: 8px 10px !important; gap: 4px; -webkit-overflow-scrolling: touch;
+          }
+          .app-nav button { white-space: nowrap; flex-shrink: 0; margin-bottom: 0 !important; }
+          .app-main { padding: 14px !important; max-width: 100% !important; }
+          .header-row-stack { flex-direction: column !important; align-items: flex-start !important; gap: 12px !important; }
+          .header-row-stack > * { width: 100% !important; }
+          .responsive-grid-2 { grid-template-columns: 1fr !important; }
+          .modal-card { width: 92vw !important; max-width: 92vw !important; padding: 18px !important; }
+          .batch-form-grid { grid-template-columns: 1fr 1fr !important; }
+          .dashboard-stats { flex-wrap: wrap !important; }
+          .dashboard-stats > * { flex: 1 1 45% !important; min-width: 130px; }
+        }
       `}</style>
 
-      <header style={{ background: 'var(--navy)', padding: '16px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+      <header className="app-header" style={{ background: 'var(--navy)', padding: '16px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <img src="/logo-cream.png" alt="Margaret River Beer Co" style={{ height: 28, width: 'auto' }} />
           <div style={{ width: 1, height: 22, background: 'rgba(242,237,226,0.25)' }} />
@@ -2021,8 +2039,8 @@ export default function App() {
         </div>
       </header>
 
-      <div style={{ display: 'flex' }}>
-        <nav style={{ width: 210, borderRight: '1px solid var(--line)', padding: '20px 12px', flexShrink: 0 }}>
+      <div className="app-shell" style={{ display: 'flex' }}>
+        <nav className="app-nav" style={{ width: 210, borderRight: '1px solid var(--line)', padding: '20px 12px', flexShrink: 0 }}>
           {tabs.map(t => (
             <button key={t.id} onClick={() => { setTab(t.id); setPresetBatchId(null); setPresetTastingType(null); setEditingSession(null); }} style={{
               width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', marginBottom: 4,
@@ -2034,7 +2052,7 @@ export default function App() {
           {store.error && <p style={{ fontSize: 11, color: 'var(--bad)', marginTop: 16, padding: '0 12px' }}>{store.error}</p>}
         </nav>
 
-        <main style={{ flex: 1, padding: '28px 32px', maxWidth: 1180 }}>
+        <main className="app-main" style={{ flex: 1, padding: '28px 32px', maxWidth: 1180 }}>
           {tab === 'panels' && <PanelsView store={store} isLead={isLead} currentProfile={profile} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setTab('submit'); }} />}
           {tab === 'submit' && <TastingForm store={store} currentProfile={profile} onDone={() => { setEditingSession(null); setTab(editingSession ? 'dashboard' : 'panels'); }} presetBatchId={presetBatchId} presetTastingType={presetTastingType} editSession={editingSession} />}
           {tab === 'brite' && <PackagingSignOffView store={store} currentProfile={profile} />}
