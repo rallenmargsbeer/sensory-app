@@ -244,6 +244,12 @@ function useSupabaseData(session) {
     await loadAll();
   };
 
+  const deletePanel = async (panelId) => {
+    const { error } = await supabase.from('panels').delete().eq('id', panelId);
+    if (error) throw error;
+    await loadAll();
+  };
+
   const addBriteCheck = async ({ batchId, decision, notes }) => {
     const { error } = await supabase.from('brite_checks').insert({
       batch_id: batchId, taster_id: session.user.id, date: todayISO(), decision, notes: notes || '',
@@ -255,7 +261,7 @@ function useSupabaseData(session) {
   return {
     skus, batches, retention, sessions, panels, panelBatches, briteChecks, profiles, profileName,
     loading, error, reload: loadAll,
-    addSku, updateSku, addBatch, addSession, createPanel, importBatches, addBriteCheck,
+    addSku, updateSku, addBatch, addSession, createPanel, deletePanel, importBatches, addBriteCheck,
   };
 }
 
@@ -637,6 +643,28 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
 // ============================================================
 // Panels
 // ============================================================
+function DeletePanelButton({ panel, store }) {
+  const [busy, setBusy] = useState(false);
+
+  const handleClick = async () => {
+    if (!window.confirm(`Delete "${panel.label}"? This removes the panel itself — the batches and any tastings already logged stay untouched.`)) return;
+    setBusy(true);
+    try {
+      await store.deletePanel(panel.id);
+    } catch (e) {
+      alert(e.message || 'Could not delete — try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Button variant="danger" onClick={handleClick} disabled={busy} style={{ padding: '6px 10px', fontSize: 12 }}>
+      <X size={13} /> {busy ? 'Deleting…' : 'Delete'}
+    </Button>
+  );
+}
+
 function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
   const [building, setBuilding] = useState(false);
   const [label, setLabel] = useState('');
@@ -737,7 +765,10 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
                   </div>
                   <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{panel.date} · {progress.total} batches</p>
                 </div>
-                <Pill tone={progress.doneByMe === progress.total ? 'good' : 'warn'}>{progress.doneByMe}/{progress.total} done by you</Pill>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Pill tone={progress.doneByMe === progress.total ? 'good' : 'warn'}>{progress.doneByMe}/{progress.total} done by you</Pill>
+                  {isLead && <DeletePanelButton panel={panel} store={store} />}
+                </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {progress.batchIds.map(bid => {
