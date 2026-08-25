@@ -104,6 +104,7 @@ function useSupabaseData(session) {
   const [sensorySessionParticipants, setSensorySessionParticipants] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [error, setError] = useState(null);
 
   const loadAll = async () => {
@@ -138,6 +139,7 @@ function useSupabaseData(session) {
       setError(e.message || 'Failed to load data.');
     } finally {
       setLoading(false);
+      setInitialLoadDone(true);
     }
   };
 
@@ -320,7 +322,7 @@ function useSupabaseData(session) {
   return {
     skus, batches, retention, sessions, panels, panelBatches, briteChecks, profiles, profileName,
     sensorySessions, sensorySessionPanels, sensorySessionParticipants,
-    loading, error, reload: loadAll,
+    loading, initialLoadDone, error, reload: loadAll,
     addSku, updateSku, addBatch, addSession, updateSession, deleteSession, createPanel, deletePanel, importBatches, addBriteCheck,
     createSensorySession, deleteSensorySession,
   };
@@ -558,10 +560,6 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [justAdvanced, setJustAdvanced] = useState('');
-  useEffect(() => {
-    console.log('DEBUG TastingForm MOUNTED');
-    return () => console.log('DEBUG TastingForm UNMOUNTED');
-  }, []);
 
   const batch = store.batches.find(b => b.id === batchId);
   const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
@@ -600,11 +598,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
       const submittedBatchId = batchId;
       await store.addSession(payload);
 
-      console.log('DEBUG activePanelId:', activePanelId);
-      console.log('DEBUG panelBatches for this panel:', store.panelBatches.filter(pb => pb.panel_id === activePanelId));
-      console.log('DEBUG my tastings of this type:', store.sessions.filter(s => s.taster_id === currentProfile.id && s.tasting_type === tastingType).map(s => s.batch_id));
       const next = findNextInPanel(submittedBatchId);
-      console.log('DEBUG next batch found:', next);
       if (next) {
         const submittedBatch = store.batches.find(b => b.id === submittedBatchId);
         setJustAdvanced(`Saved ${submittedBatch ? submittedBatch.batch_number : 'that one'} — now tasting the next beer in this panel.`);
@@ -2390,7 +2384,7 @@ export default function App() {
   if (!session) {
     return <div style={themeVars}><AuthScreen /></div>;
   }
-  if (!profile || store.loading) {
+  if (!profile || (store.loading && !store.initialLoadDone)) {
     return (
       <div style={{ ...themeVars, background: 'var(--bg)', color: 'var(--text)', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>Loading…</p>
