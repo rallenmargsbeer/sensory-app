@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, LogOut, TrendingUp, Droplet } from 'lucide-react';
+import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, LogOut, TrendingUp, Droplet, Calendar } from 'lucide-react';
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
 
@@ -82,6 +82,7 @@ const OFF_FLAVORS = [
 ];
 
 const RETENTION_INTERVALS = [30, 90, 180];
+const CHECK_SESSION_COMPLETION_URL = 'https://qglmuisievxvntfgztfl.supabase.co/functions/v1/check-session-completion';
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
 function daysBetween(a, b) { return Math.round((new Date(b) - new Date(a)) / 86400000); }
@@ -98,6 +99,9 @@ function useSupabaseData(session) {
   const [panels, setPanels] = useState([]);
   const [panelBatches, setPanelBatches] = useState([]);
   const [briteChecks, setBriteChecks] = useState([]);
+  const [sensorySessions, setSensorySessions] = useState([]);
+  const [sensorySessionPanels, setSensorySessionPanels] = useState([]);
+  const [sensorySessionParticipants, setSensorySessionParticipants] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -105,7 +109,7 @@ function useSupabaseData(session) {
   const loadAll = async () => {
     setLoading(true); setError(null);
     try {
-      const [s, b, r, se, p, pb, bc, pr] = await Promise.all([
+      const [s, b, r, se, p, pb, bc, ss, ssp, sspt, pr] = await Promise.all([
         supabase.from('skus').select('*'),
         supabase.from('batches').select('*'),
         supabase.from('retention_checkpoints').select('*'),
@@ -113,6 +117,9 @@ function useSupabaseData(session) {
         supabase.from('panels').select('*'),
         supabase.from('panel_batches').select('*'),
         supabase.from('brite_checks').select('*'),
+        supabase.from('sensory_sessions').select('*'),
+        supabase.from('sensory_session_panels').select('*'),
+        supabase.from('sensory_session_participants').select('*'),
         supabase.from('profiles').select('*'),
       ]);
       if (s.error) throw s.error;
@@ -123,6 +130,9 @@ function useSupabaseData(session) {
       setPanels(p.data || []);
       setPanelBatches(pb.data || []);
       setBriteChecks(bc.data || []);
+      setSensorySessions(ss.data || []);
+      setSensorySessionPanels(ssp.data || []);
+      setSensorySessionParticipants(sspt.data || []);
       setProfiles(pr.data || []);
     } catch (e) {
       setError(e.message || 'Failed to load data.');
@@ -223,6 +233,15 @@ function useSupabaseData(session) {
     return { added, skipped };
   };
 
+  const triggerCompletionCheck = () => {
+    // Fire-and-forget — never let this block or fail the actual tasting submission.
+    fetch(CHECK_SESSION_COMPLETION_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    }).catch(() => {});
+  };
+
   const addSession = async (sess) => {
     const { error } = await supabase.from('sessions').insert({
       batch_id: sess.batchId, taster_id: session.user.id, date: sess.date, scores: sess.scores,
@@ -235,6 +254,7 @@ function useSupabaseData(session) {
       await supabase.from('retention_checkpoints').update({ assessed: true }).eq('id', sess.retentionCheckpointId);
     }
     await loadAll();
+    triggerCompletionCheck();
   };
 
   const updateSession = async (sessionId, sess) => {
@@ -249,6 +269,7 @@ function useSupabaseData(session) {
       await supabase.from('retention_checkpoints').update({ assessed: true }).eq('id', sess.retentionCheckpointId);
     }
     await loadAll();
+    triggerCompletionCheck();
   };
 
   const deleteSession = async (sessionId) => {
@@ -278,10 +299,30 @@ function useSupabaseData(session) {
     await loadAll();
   };
 
+  const createSensorySession = async ({ date, label, panelIds, participantIds }) => {
+    const { data: sess, error } = await supabase.from('sensory_sessions').insert({ date, label }).select().single();
+    if (error) throw error;
+    if (panelIds.length > 0) {
+      await supabase.from('sensory_session_panels').insert(panelIds.map(pid => ({ sensory_session_id: sess.id, panel_id: pid })));
+    }
+    if (participantIds.length > 0) {
+      await supabase.from('sensory_session_participants').insert(participantIds.map(uid => ({ sensory_session_id: sess.id, user_id: uid })));
+    }
+    await loadAll();
+  };
+
+  const deleteSensorySession = async (sensorySessionId) => {
+    const { error } = await supabase.from('sensory_sessions').delete().eq('id', sensorySessionId);
+    if (error) throw error;
+    await loadAll();
+  };
+
   return {
     skus, batches, retention, sessions, panels, panelBatches, briteChecks, profiles, profileName,
+    sensorySessions, sensorySessionPanels, sensorySessionParticipants,
     loading, error, reload: loadAll,
     addSku, updateSku, addBatch, addSession, updateSession, deleteSession, createPanel, deletePanel, importBatches, addBriteCheck,
+    createSensorySession, deleteSensorySession,
   };
 }
 
@@ -370,7 +411,7 @@ function TraitSpiderChart({ section, target, actual, height = 420 }) {
   );
 }
 
-const COMPARE_COLORS = ['var(--accent)', '#7A9CC6', '#B98CC7'];
+const COMPARE_COLORS = ['var(--accent)', '#7A9CC6', '#B98CC7', 'var(--teal)', 'var(--gold)', 'var(--forest)', '#C7597A', '#5B8C7B'];
 
 function MultiBatchSpiderChart({ section, target, series, height = 420 }) {
   // series: [{ label, scores }] — up to 3
@@ -712,6 +753,335 @@ function DeletePanelButton({ panel, store }) {
     <Button variant="danger" onClick={handleClick} disabled={busy} style={{ padding: '6px 10px', fontSize: 12 }}>
       <X size={13} /> {busy ? 'Deleting…' : 'Delete'}
     </Button>
+  );
+}
+
+function computeSessionProgress(sess, store) {
+  const panelIds = store.sensorySessionPanels.filter(sp => sp.sensory_session_id === sess.id).map(sp => sp.panel_id);
+  const participantIds = store.sensorySessionParticipants.filter(pp => pp.sensory_session_id === sess.id).map(pp => pp.user_id);
+  const panelsInfo = panelIds.map(pid => store.panels.find(p => p.id === pid)).filter(Boolean);
+
+  const batchEntries = [];
+  panelsInfo.forEach(panel => {
+    const bids = store.panelBatches.filter(pb => pb.panel_id === panel.id).map(pb => pb.batch_id);
+    bids.forEach(bid => batchEntries.push({ batchId: bid, panelType: panel.panel_type }));
+  });
+
+  let total = 0, done = 0;
+  batchEntries.forEach(be => {
+    participantIds.forEach(uid => {
+      total++;
+      if (store.sessions.some(s => s.batch_id === be.batchId && s.taster_id === uid && s.tasting_type === be.panelType)) done++;
+    });
+  });
+
+  return { panelsInfo, participantIds, batchEntries, total, done };
+}
+
+function SessionBuilder({ store }) {
+  const [building, setBuilding] = useState(false);
+  const [date, setDate] = useState(todayISO());
+  const [label, setLabel] = useState('');
+  const [selectedPanelIds, setSelectedPanelIds] = useState([]);
+  const [selectedParticipantIds, setSelectedParticipantIds] = useState([]);
+  const [busy, setBusy] = useState(false);
+
+  const togglePanel = (id) => setSelectedPanelIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  const toggleParticipant = (id) => setSelectedParticipantIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  const create = async () => {
+    if (selectedPanelIds.length === 0 || selectedParticipantIds.length === 0) return;
+    setBusy(true);
+    try {
+      await store.createSensorySession({ date, label: label || `Session — ${date}`, panelIds: selectedPanelIds, participantIds: selectedParticipantIds });
+      setBuilding(false); setLabel(''); setSelectedPanelIds([]); setSelectedParticipantIds([]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sortedPanels = useMemo(() => [...store.panels].sort((a, b) => b.date.localeCompare(a.date)), [store.panels]);
+
+  return (
+    <>
+      <Button onClick={() => setBuilding(v => !v)}><Plus size={15} /> Build session</Button>
+      {building && (
+        <Card style={{ marginTop: 14, marginBottom: 20 }}>
+          <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+            <Field label="Date"><input type="date" style={inputStyle} value={date} onChange={e => setDate(e.target.value)} /></Field>
+            <Field label="Label (optional)"><input style={inputStyle} value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Thursday session" /></Field>
+          </div>
+          <Field label={`Panels to include (${selectedPanelIds.length} chosen)`}>
+            <div style={{ maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {sortedPanels.map(p => (
+                <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 6, cursor: 'pointer', background: selectedPanelIds.includes(p.id) ? 'var(--surface-2)' : 'transparent' }}>
+                  <input type="checkbox" checked={selectedPanelIds.includes(p.id)} onChange={() => togglePanel(p.id)} />
+                  <span style={{ fontSize: 13 }}>{p.label}</span>
+                  <Pill tone={p.panel_type === 'retention' ? 'warn' : 'neutral'}>{p.panel_type === 'retention' ? 'Retention' : 'TTT'}</Pill>
+                </label>
+              ))}
+              {sortedPanels.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No panels exist yet — build one on the Panels tab first.</p>}
+            </div>
+          </Field>
+          <Field label={`Assign participants (${selectedParticipantIds.length} chosen)`}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {store.profiles.map(p => (
+                <button key={p.id} type="button" onClick={() => toggleParticipant(p.id)} style={{
+                  fontSize: 12, padding: '6px 10px', borderRadius: 20, cursor: 'pointer',
+                  border: `1px solid ${selectedParticipantIds.includes(p.id) ? 'var(--accent)' : 'var(--line)'}`,
+                  background: selectedParticipantIds.includes(p.id) ? 'rgba(243,112,58,0.16)' : 'transparent',
+                  color: selectedParticipantIds.includes(p.id) ? 'var(--accent)' : 'var(--text-muted)',
+                }}>{p.name}</button>
+              ))}
+            </div>
+          </Field>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <Button onClick={create} disabled={busy || selectedPanelIds.length === 0 || selectedParticipantIds.length === 0}>{busy ? 'Creating…' : 'Create session'}</Button>
+            <Button variant="ghost" onClick={() => setBuilding(false)}>Cancel</Button>
+          </div>
+        </Card>
+      )}
+    </>
+  );
+}
+
+function SessionResultBatch({ be, store, relevantTastings }) {
+  const [mode, setMode] = useState('averaged'); // 'averaged' | 'individual'
+
+  const batch = store.batches.find(b => b.id === be.batchId);
+  const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
+  const target = sku ? normalizeTarget(sku.target) : null;
+  const tastings = relevantTastings.filter(t => t.batch_id === be.batchId && t.tasting_type === be.panelType);
+
+  const avgScoresBySection = { aroma: {}, flavor: {} };
+  ['aroma', 'flavor'].forEach(section => {
+    TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => {
+      const id = traitId(g.category, t);
+      const vals = tastings.map(s => s.scores?.[section]?.[id]).filter(v => v != null);
+      avgScoresBySection[section][id] = vals.length > 0 ? vals.reduce((a, c) => a + c, 0) / vals.length : null;
+    }));
+  });
+
+  const seriesBySection = {
+    aroma: tastings.map(t => ({ label: store.profileName(t.taster_id), scores: t.scores?.aroma || {} })),
+    flavor: tastings.map(t => ({ label: store.profileName(t.taster_id), scores: t.scores?.flavor || {} })),
+  };
+
+  return (
+    <div style={{ marginBottom: 32, paddingBottom: 28, borderBottom: '1px solid var(--line)' }}>
+      <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <h3 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 18 }}>{batch ? batch.batch_number : '—'} — {sku ? sku.name : 'Unknown SKU'}</h3>
+          <Pill tone={be.panelType === 'retention' ? 'warn' : 'neutral'}>{be.panelType === 'retention' ? 'Retention' : 'TTT'}</Pill>
+        </div>
+        {tastings.length > 1 && (
+          <div className="no-print" style={{ display: 'flex', gap: 6 }}>
+            <button type="button" onClick={() => setMode('averaged')} style={{
+              fontSize: 12, padding: '6px 12px', borderRadius: 20, cursor: 'pointer',
+              border: `1px solid ${mode === 'averaged' ? 'var(--accent)' : 'var(--line)'}`,
+              background: mode === 'averaged' ? 'rgba(243,112,58,0.16)' : 'transparent',
+              color: mode === 'averaged' ? 'var(--accent)' : 'var(--text-muted)',
+            }}>Averaged</button>
+            <button type="button" onClick={() => setMode('individual')} style={{
+              fontSize: 12, padding: '6px 12px', borderRadius: 20, cursor: 'pointer',
+              border: `1px solid ${mode === 'individual' ? 'var(--accent)' : 'var(--line)'}`,
+              background: mode === 'individual' ? 'rgba(243,112,58,0.16)' : 'transparent',
+              color: mode === 'individual' ? 'var(--accent)' : 'var(--text-muted)',
+            }}>Individual ({tastings.length})</button>
+          </div>
+        )}
+      </div>
+
+      <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 18 }}>
+        {mode === 'averaged' ? (
+          <>
+            <TraitSpiderChart section="aroma" target={target ? target.aroma : null} actual={avgScoresBySection.aroma} height={420} />
+            <TraitSpiderChart section="flavor" target={target ? target.flavor : null} actual={avgScoresBySection.flavor} height={420} />
+          </>
+        ) : (
+          <>
+            <MultiBatchSpiderChart section="aroma" target={target ? target.aroma : null} series={seriesBySection.aroma} height={420} />
+            <MultiBatchSpiderChart section="flavor" target={target ? target.flavor : null} series={seriesBySection.flavor} height={420} />
+          </>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        {tastings.map(t => (
+          <div key={t.id} style={{ flex: '1 1 220px', border: '1px solid var(--line)', borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600 }}>{store.profileName(t.taster_id)}</span>
+              <Pill tone={t.overall === 'pass' ? 'good' : t.overall === 'flag' ? 'warn' : 'bad'}>{t.overall}</Pill>
+            </div>
+            {(t.off_flavors || []).length > 0 && <p style={{ margin: '4px 0 0', fontSize: 11.5, color: 'var(--bad)' }}>{t.off_flavors.map(f => `${f.flavor} (${f.intensity}/5)`).join(', ')}</p>}
+            {t.notes && <p style={{ margin: '4px 0 0', fontSize: 11.5, color: 'var(--text-muted)' }}>"{t.notes}"</p>}
+          </div>
+        ))}
+        {tastings.length === 0 && <p style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No tastings recorded.</p>}
+      </div>
+    </div>
+  );
+}
+
+function SessionResultsModal({ sess, store, onClose }) {
+  const progress = computeSessionProgress(sess, store);
+
+  // All tastings belonging to this session's batches/types
+  const relevantTastings = useMemo(() => {
+    return progress.batchEntries.flatMap(be =>
+      store.sessions.filter(s => s.batch_id === be.batchId && s.tasting_type === be.panelType && progress.participantIds.includes(s.taster_id))
+    );
+  }, [progress, store.sessions]);
+
+  const passCount = relevantTastings.filter(t => t.overall === 'pass').length;
+  const flagCount = relevantTastings.filter(t => t.overall === 'flag').length;
+  const failCount = relevantTastings.filter(t => t.overall === 'fail').length;
+  const allOffFlavors = relevantTastings.flatMap(t => t.off_flavors || []);
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 60, padding: '32px 20px', overflowY: 'auto' }}>
+      <div className="modal-card" style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: 32, width: 1200, maxWidth: '96vw' }}>
+        <div className="no-print header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <Button variant="ghost" onClick={onClose}><X size={15} /> Close</Button>
+          <Button onClick={() => window.print()}><Upload size={15} style={{ transform: 'rotate(180deg)' }} /> Print / Save as PDF</Button>
+        </div>
+
+        <div id="batch-report-printable">
+          <div style={{ borderBottom: '2px solid var(--accent)', paddingBottom: 14, marginBottom: 20 }}>
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: 0.5, fontFamily: 'var(--font-mono)' }}>Session Results</p>
+            <h2 style={{ margin: '2px 0 4px', fontFamily: 'var(--font-display)', fontSize: 26 }}>{sess.label}</h2>
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--text-muted)' }}>
+              {sess.date} · Participants: {progress.participantIds.map(uid => store.profileName(uid)).join(', ') || 'none'}
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: 12, marginBottom: 24 }}>
+            <Card style={{ flex: 1 }}>
+              <p style={{ margin: '0 0 4px', fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Tastings</p>
+              <p style={{ margin: 0, fontSize: 26, fontFamily: 'var(--font-display)' }}>{relevantTastings.length}</p>
+            </Card>
+            <Card style={{ flex: 1 }}>
+              <p style={{ margin: '0 0 4px', fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Pass</p>
+              <p style={{ margin: 0, fontSize: 26, fontFamily: 'var(--font-display)', color: 'var(--good)' }}>{passCount}</p>
+            </Card>
+            <Card style={{ flex: 1 }}>
+              <p style={{ margin: '0 0 4px', fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Flag</p>
+              <p style={{ margin: 0, fontSize: 26, fontFamily: 'var(--font-display)', color: 'var(--accent)' }}>{flagCount}</p>
+            </Card>
+            <Card style={{ flex: 1 }}>
+              <p style={{ margin: '0 0 4px', fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Fail</p>
+              <p style={{ margin: 0, fontSize: 26, fontFamily: 'var(--font-display)', color: 'var(--bad)' }}>{failCount}</p>
+            </Card>
+          </div>
+
+          {allOffFlavors.length > 0 && (
+            <Card style={{ marginBottom: 24 }}>
+              <p style={{ margin: '0 0 8px', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Off-flavors noted this session</p>
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--bad)' }}>{allOffFlavors.map(f => `${f.flavor} (${f.intensity}/5)`).join(', ')}</p>
+            </Card>
+          )}
+
+          {progress.batchEntries.map(be => (
+            <SessionResultBatch key={`${be.batchId}-${be.panelType}`} be={be} store={store} relevantTastings={relevantTastings} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SessionCard({ sess, store, isLead, currentProfile, onLogTasting }) {
+  const progress = computeSessionProgress(sess, store);
+  const [expanded, setExpanded] = useState(!isLead);
+  const [showResults, setShowResults] = useState(false);
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Delete "${sess.label}"? This does not affect the underlying panels, batches, or tastings.`)) return;
+    try {
+      await store.deleteSensorySession(sess.id);
+    } catch (e) {
+      alert(e.message || 'Could not delete — try again.');
+    }
+  };
+
+  return (
+    <Card>
+      {showResults && <SessionResultsModal sess={sess} store={store} onClose={() => setShowResults(false)} />}
+      <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <p style={{ margin: 0, fontWeight: 700, fontSize: 15, fontFamily: 'var(--font-display)' }}>{sess.label}</p>
+            <Pill tone={sess.status === 'complete' ? 'good' : 'warn'}>{sess.status === 'complete' ? 'Complete' : 'Open'}</Pill>
+          </div>
+          <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{sess.date} · {progress.done}/{progress.total} tastings done</p>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {sess.status === 'complete' ? (
+            <Button variant="ghost" onClick={() => setShowResults(true)} style={{ fontSize: 12, padding: '6px 10px' }}>View results</Button>
+          ) : (
+            <Button variant="ghost" onClick={() => setExpanded(v => !v)} style={{ fontSize: 12, padding: '6px 10px' }}>{expanded ? 'Hide' : 'View'}</Button>
+          )}
+          {isLead && <Button variant="danger" onClick={handleDelete} style={{ fontSize: 12, padding: '6px 10px' }}><X size={13} /> Delete</Button>}
+        </div>
+      </div>
+
+      {isLead && (
+        <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: expanded ? 12 : 0 }}>
+          Participants: {progress.participantIds.length > 0 ? progress.participantIds.map(uid => store.profileName(uid)).join(', ') : 'none assigned'}
+        </p>
+      )}
+
+      {sess.status !== 'complete' && expanded && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {progress.batchEntries.map(be => {
+            const batch = store.batches.find(b => b.id === be.batchId);
+            const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
+            const myTasting = store.sessions.find(s => s.batch_id === be.batchId && s.taster_id === currentProfile.id && s.tasting_type === be.panelType);
+            return (
+              <div key={`${be.batchId}-${be.panelType}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--surface-2)', borderRadius: 6 }}>
+                <span style={{ fontSize: 13.5 }}>{batch ? batch.batch_number : '—'} — {sku ? sku.name : ''} <Pill tone={be.panelType === 'retention' ? 'warn' : 'neutral'}>{be.panelType === 'retention' ? 'Retention' : 'TTT'}</Pill></span>
+                {!isLead && (myTasting ? <Pill tone="good">You've tasted this</Pill> : (
+                  <Button variant="ghost" onClick={() => onLogTasting(be.batchId, be.panelType)} style={{ fontSize: 12, padding: '6px 10px' }}>Taste now <ChevronRight size={13} /></Button>
+                ))}
+              </div>
+
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function SessionsView({ store, isLead, currentProfile, onLogTasting }) {
+  const mySessions = useMemo(() => {
+    const ids = store.sensorySessionParticipants.filter(pp => pp.user_id === currentProfile.id).map(pp => pp.sensory_session_id);
+    return store.sensorySessions.filter(s => ids.includes(s.id)).sort((a, b) => b.date.localeCompare(a.date));
+  }, [store.sensorySessions, store.sensorySessionParticipants, currentProfile.id]);
+
+  const allSessionsSorted = useMemo(() => [...store.sensorySessions].sort((a, b) => b.date.localeCompare(a.date)), [store.sensorySessions]);
+  const sessionsToShow = isLead ? allSessionsSorted : mySessions;
+
+  return (
+    <div>
+      <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div>
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Sessions</h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>{isLead ? 'All sensory sessions.' : "Sessions you're assigned to."}</p>
+        </div>
+        {isLead && <SessionBuilder store={store} />}
+      </div>
+
+      {sessionsToShow.length === 0 && (
+        <p style={{ color: 'var(--text-muted)' }}>{isLead ? 'No sessions yet — build one above.' : 'No sessions assigned to you right now.'}</p>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {sessionsToShow.map(sess => (
+          <SessionCard key={sess.id} sess={sess} store={store} isLead={isLead} currentProfile={currentProfile} onLogTasting={onLogTasting} />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1936,7 +2306,7 @@ function Dashboard({ store, onEditSession }) {
 export default function App() {
   const [session, setSession] = useState(undefined);
   const [profile, setProfile] = useState(null);
-  const [tab, setTab] = useState('panels');
+  const [tab, setTab] = useState('sessions');
   const [presetBatchId, setPresetBatchId] = useState(null);
   const [presetTastingType, setPresetTastingType] = useState(null);
   const [editingSession, setEditingSession] = useState(null);
@@ -1956,6 +2326,7 @@ export default function App() {
   const isLead = profile?.role === 'lead';
 
   const tabs = [
+    { id: 'sessions', label: 'Sessions', icon: Calendar, allowed: true },
     { id: 'panels', label: 'Panels', icon: Users, allowed: true },
     { id: 'submit', label: 'Submit tasting', icon: ClipboardList, allowed: true },
     { id: 'brite', label: 'Packaging sign off', icon: Droplet, allowed: true },
@@ -2053,8 +2424,9 @@ export default function App() {
         </nav>
 
         <main className="app-main" style={{ flex: 1, padding: '28px 32px', maxWidth: 1180 }}>
+          {tab === 'sessions' && <SessionsView store={store} isLead={isLead} currentProfile={profile} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setTab('submit'); }} />}
           {tab === 'panels' && <PanelsView store={store} isLead={isLead} currentProfile={profile} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setTab('submit'); }} />}
-          {tab === 'submit' && <TastingForm store={store} currentProfile={profile} onDone={() => { setEditingSession(null); setTab(editingSession ? 'dashboard' : 'panels'); }} presetBatchId={presetBatchId} presetTastingType={presetTastingType} editSession={editingSession} />}
+          {tab === 'submit' && <TastingForm store={store} currentProfile={profile} onDone={() => { setEditingSession(null); setTab(editingSession ? 'dashboard' : 'sessions'); }} presetBatchId={presetBatchId} presetTastingType={presetTastingType} editSession={editingSession} />}
           {tab === 'brite' && <PackagingSignOffView store={store} currentProfile={profile} />}
           {tab === 'retention' && isLead && <RetentionQueue store={store} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setTab('submit'); }} />}
           {tab === 'batches' && isLead && <BatchesView store={store} isLead={isLead} />}
