@@ -558,6 +558,10 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [justAdvanced, setJustAdvanced] = useState('');
+  useEffect(() => {
+    console.log('DEBUG TastingForm MOUNTED');
+    return () => console.log('DEBUG TastingForm UNMOUNTED');
+  }, []);
 
   const batch = store.batches.find(b => b.id === batchId);
   const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
