@@ -411,7 +411,7 @@ function TraitSpiderChart({ section, target, actual, height = 420 }) {
   );
 }
 
-const COMPARE_COLORS = ['var(--accent)', '#7A9CC6', '#B98CC7'];
+const COMPARE_COLORS = ['var(--accent)', '#7A9CC6', '#B98CC7', 'var(--teal)', 'var(--gold)', 'var(--forest)', '#C7597A', '#5B8C7B'];
 
 function MultiBatchSpiderChart({ section, target, series, height = 420 }) {
   // series: [{ label, scores }] — up to 3
@@ -845,6 +845,84 @@ function SessionBuilder({ store }) {
   );
 }
 
+function SessionResultBatch({ be, store, relevantTastings }) {
+  const [mode, setMode] = useState('averaged'); // 'averaged' | 'individual'
+
+  const batch = store.batches.find(b => b.id === be.batchId);
+  const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
+  const target = sku ? normalizeTarget(sku.target) : null;
+  const tastings = relevantTastings.filter(t => t.batch_id === be.batchId && t.tasting_type === be.panelType);
+
+  const avgScoresBySection = { aroma: {}, flavor: {} };
+  ['aroma', 'flavor'].forEach(section => {
+    TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => {
+      const id = traitId(g.category, t);
+      const vals = tastings.map(s => s.scores?.[section]?.[id]).filter(v => v != null);
+      avgScoresBySection[section][id] = vals.length > 0 ? vals.reduce((a, c) => a + c, 0) / vals.length : null;
+    }));
+  });
+
+  const seriesBySection = {
+    aroma: tastings.map(t => ({ label: store.profileName(t.taster_id), scores: t.scores?.aroma || {} })),
+    flavor: tastings.map(t => ({ label: store.profileName(t.taster_id), scores: t.scores?.flavor || {} })),
+  };
+
+  return (
+    <div style={{ marginBottom: 32, paddingBottom: 28, borderBottom: '1px solid var(--line)' }}>
+      <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <h3 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 18 }}>{batch ? batch.batch_number : '—'} — {sku ? sku.name : 'Unknown SKU'}</h3>
+          <Pill tone={be.panelType === 'retention' ? 'warn' : 'neutral'}>{be.panelType === 'retention' ? 'Retention' : 'TTT'}</Pill>
+        </div>
+        {tastings.length > 1 && (
+          <div className="no-print" style={{ display: 'flex', gap: 6 }}>
+            <button type="button" onClick={() => setMode('averaged')} style={{
+              fontSize: 12, padding: '6px 12px', borderRadius: 20, cursor: 'pointer',
+              border: `1px solid ${mode === 'averaged' ? 'var(--accent)' : 'var(--line)'}`,
+              background: mode === 'averaged' ? 'rgba(243,112,58,0.16)' : 'transparent',
+              color: mode === 'averaged' ? 'var(--accent)' : 'var(--text-muted)',
+            }}>Averaged</button>
+            <button type="button" onClick={() => setMode('individual')} style={{
+              fontSize: 12, padding: '6px 12px', borderRadius: 20, cursor: 'pointer',
+              border: `1px solid ${mode === 'individual' ? 'var(--accent)' : 'var(--line)'}`,
+              background: mode === 'individual' ? 'rgba(243,112,58,0.16)' : 'transparent',
+              color: mode === 'individual' ? 'var(--accent)' : 'var(--text-muted)',
+            }}>Individual ({tastings.length})</button>
+          </div>
+        )}
+      </div>
+
+      <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 18 }}>
+        {mode === 'averaged' ? (
+          <>
+            <TraitSpiderChart section="aroma" target={target ? target.aroma : null} actual={avgScoresBySection.aroma} height={420} />
+            <TraitSpiderChart section="flavor" target={target ? target.flavor : null} actual={avgScoresBySection.flavor} height={420} />
+          </>
+        ) : (
+          <>
+            <MultiBatchSpiderChart section="aroma" target={target ? target.aroma : null} series={seriesBySection.aroma} height={420} />
+            <MultiBatchSpiderChart section="flavor" target={target ? target.flavor : null} series={seriesBySection.flavor} height={420} />
+          </>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        {tastings.map(t => (
+          <div key={t.id} style={{ flex: '1 1 220px', border: '1px solid var(--line)', borderRadius: 8, padding: '10px 12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600 }}>{store.profileName(t.taster_id)}</span>
+              <Pill tone={t.overall === 'pass' ? 'good' : t.overall === 'flag' ? 'warn' : 'bad'}>{t.overall}</Pill>
+            </div>
+            {(t.off_flavors || []).length > 0 && <p style={{ margin: '4px 0 0', fontSize: 11.5, color: 'var(--bad)' }}>{t.off_flavors.map(f => `${f.flavor} (${f.intensity}/5)`).join(', ')}</p>}
+            {t.notes && <p style={{ margin: '4px 0 0', fontSize: 11.5, color: 'var(--text-muted)' }}>"{t.notes}"</p>}
+          </div>
+        ))}
+        {tastings.length === 0 && <p style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No tastings recorded.</p>}
+      </div>
+    </div>
+  );
+}
+
 function SessionResultsModal({ sess, store, onClose }) {
   const progress = computeSessionProgress(sess, store);
 
@@ -862,7 +940,7 @@ function SessionResultsModal({ sess, store, onClose }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 60, padding: '32px 20px', overflowY: 'auto' }}>
-      <div className="modal-card" style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: 32, width: 820, maxWidth: '100%' }}>
+      <div className="modal-card" style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: 32, width: 1200, maxWidth: '96vw' }}>
         <div className="no-print header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <Button variant="ghost" onClick={onClose}><X size={15} /> Close</Button>
           <Button onClick={() => window.print()}><Upload size={15} style={{ transform: 'rotate(180deg)' }} /> Print / Save as PDF</Button>
@@ -903,48 +981,9 @@ function SessionResultsModal({ sess, store, onClose }) {
             </Card>
           )}
 
-          {progress.batchEntries.map(be => {
-            const batch = store.batches.find(b => b.id === be.batchId);
-            const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
-            const target = sku ? normalizeTarget(sku.target) : null;
-            const tastings = relevantTastings.filter(t => t.batch_id === be.batchId && t.tasting_type === be.panelType);
-
-            const avgScoresBySection = { aroma: {}, flavor: {} };
-            ['aroma', 'flavor'].forEach(section => {
-              TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => {
-                const id = traitId(g.category, t);
-                const vals = tastings.map(s => s.scores?.[section]?.[id]).filter(v => v != null);
-                avgScoresBySection[section][id] = vals.length > 0 ? vals.reduce((a, c) => a + c, 0) / vals.length : null;
-              }));
-            });
-
-            return (
-              <div key={`${be.batchId}-${be.panelType}`} style={{ marginBottom: 28, paddingBottom: 24, borderBottom: '1px solid var(--line)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                  <h3 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 18 }}>{batch ? batch.batch_number : '—'} — {sku ? sku.name : 'Unknown SKU'}</h3>
-                  <Pill tone={be.panelType === 'retention' ? 'warn' : 'neutral'}>{be.panelType === 'retention' ? 'Retention' : 'TTT'}</Pill>
-                </div>
-
-                <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 14 }}>
-                  <TraitSpiderChart section="aroma" target={target ? target.aroma : null} actual={avgScoresBySection.aroma} height={220} />
-                  <TraitSpiderChart section="flavor" target={target ? target.flavor : null} actual={avgScoresBySection.flavor} height={220} />
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {tastings.map(t => (
-                      <div key={t.id} style={{ borderBottom: '1px solid var(--line)', paddingBottom: 6 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ fontSize: 12.5, fontWeight: 600 }}>{store.profileName(t.taster_id)}</span>
-                          <Pill tone={t.overall === 'pass' ? 'good' : t.overall === 'flag' ? 'warn' : 'bad'}>{t.overall}</Pill>
-                        </div>
-                        {(t.off_flavors || []).length > 0 && <p style={{ margin: '4px 0 0', fontSize: 11.5, color: 'var(--bad)' }}>{t.off_flavors.map(f => `${f.flavor} (${f.intensity}/5)`).join(', ')}</p>}
-                        {t.notes && <p style={{ margin: '4px 0 0', fontSize: 11.5, color: 'var(--text-muted)' }}>"{t.notes}"</p>}
-                      </div>
-                    ))}
-                    {tastings.length === 0 && <p style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No tastings recorded.</p>}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {progress.batchEntries.map(be => (
+            <SessionResultBatch key={`${be.batchId}-${be.panelType}`} be={be} store={store} relevantTastings={relevantTastings} />
+          ))}
         </div>
       </div>
     </div>
