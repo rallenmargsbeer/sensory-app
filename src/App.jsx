@@ -909,14 +909,12 @@ function SessionResultsModal({ sess, store, onClose }) {
             const target = sku ? normalizeTarget(sku.target) : null;
             const tastings = relevantTastings.filter(t => t.batch_id === be.batchId && t.tasting_type === be.panelType);
 
-            const avgScoresBySection = { aroma: {}, flavor: {} };
-            ['aroma', 'flavor'].forEach(section => {
-              TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => {
-                const id = traitId(g.category, t);
-                const vals = tastings.map(s => s.scores?.[section]?.[id]).filter(v => v != null);
-                avgScoresBySection[section][id] = vals.length > 0 ? vals.reduce((a, c) => a + c, 0) / vals.length : null;
-              }));
-            });
+            const avgScores = {};
+            TRAIT_TAXONOMY[be.panelType].forEach(g => g.traits.forEach(t => {
+              const id = traitId(g.category, t);
+              const vals = tastings.map(s => s.scores?.[be.panelType]?.[id]).filter(v => v != null);
+              avgScores[id] = vals.length > 0 ? vals.reduce((a, c) => a + c, 0) / vals.length : null;
+            }));
 
             return (
               <div key={`${be.batchId}-${be.panelType}`} style={{ marginBottom: 28, paddingBottom: 24, borderBottom: '1px solid var(--line)' }}>
@@ -925,9 +923,8 @@ function SessionResultsModal({ sess, store, onClose }) {
                   <Pill tone={be.panelType === 'retention' ? 'warn' : 'neutral'}>{be.panelType === 'retention' ? 'Retention' : 'TTT'}</Pill>
                 </div>
 
-                <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 14 }}>
-                  <TraitSpiderChart section="aroma" target={target ? target.aroma : null} actual={avgScoresBySection.aroma} height={220} />
-                  <TraitSpiderChart section="flavor" target={target ? target.flavor : null} actual={avgScoresBySection.flavor} height={220} />
+                <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 14 }}>
+                  <TraitSpiderChart section={be.panelType} target={target ? target[be.panelType] : null} actual={avgScores} height={220} />
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {tastings.map(t => (
                       <div key={t.id} style={{ borderBottom: '1px solid var(--line)', paddingBottom: 6 }}>
@@ -940,7 +937,15 @@ function SessionResultsModal({ sess, store, onClose }) {
                       </div>
                     ))}
                     {tastings.length === 0 && <p style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>No tastings recorded.</p>}
-                  </div>  );
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SessionCard({ sess, store, isLead, currentProfile, onLogTasting }) {
