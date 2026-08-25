@@ -596,7 +596,11 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
       const submittedBatchId = batchId;
       await store.addSession(payload);
 
+      console.log('DEBUG activePanelId:', activePanelId);
+      console.log('DEBUG panelBatches for this panel:', store.panelBatches.filter(pb => pb.panel_id === activePanelId));
+      console.log('DEBUG my tastings of this type:', store.sessions.filter(s => s.taster_id === currentProfile.id && s.tasting_type === tastingType).map(s => s.batch_id));
       const next = findNextInPanel(submittedBatchId);
+      console.log('DEBUG next batch found:', next);
       if (next) {
         const submittedBatch = store.batches.find(b => b.id === submittedBatchId);
         setJustAdvanced(`Saved ${submittedBatch ? submittedBatch.batch_number : 'that one'} — now tasting the next beer in this panel.`);
