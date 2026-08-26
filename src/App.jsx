@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, ChevronDown, LogOut, TrendingUp, Droplet, Calendar, UserCog, Search } from 'lucide-react';
+import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, ChevronDown, LogOut, TrendingUp, Droplet, Calendar, UserCog, Search, FlaskConical } from 'lucide-react';
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
 
@@ -82,6 +82,9 @@ const OFF_FLAVORS = [
 ];
 
 const RETENTION_INTERVALS = [30, 90, 180];
+// FastOrange Wild Yeast + B Tube reads are both due this many days after a
+// QC sample is pulled — one fixed window for both test types.
+const QC_READ_DAYS = 5;
 const CHECK_SESSION_COMPLETION_URL = 'https://qglmuisievxvntfgztfl.supabase.co/functions/v1/check-session-completion';
 
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -103,6 +106,9 @@ function useSupabaseData(session) {
   const [sensorySessionPanels, setSensorySessionPanels] = useState([]);
   const [sensorySessionParticipants, setSensorySessionParticipants] = useState([]);
   const [profiles, setProfiles] = useState([]);
+  const [qcLocations, setQcLocations] = useState([]);
+  const [qcSamples, setQcSamples] = useState([]);
+  const [qcTests, setQcTests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [error, setError] = useState(null);
@@ -110,7 +116,7 @@ function useSupabaseData(session) {
   const loadAll = async () => {
     setLoading(true); setError(null);
     try {
-      const [s, b, r, se, p, pb, bc, ss, ssp, sspt, pr] = await Promise.all([
+      const [s, b, r, se, p, pb, bc, ss, ssp, sspt, pr, ql, qs, qt] = await Promise.all([
         supabase.from('skus').select('*'),
         supabase.from('batches').select('*'),
         supabase.from('retention_checkpoints').select('*'),
@@ -122,6 +128,9 @@ function useSupabaseData(session) {
         supabase.from('sensory_session_panels').select('*'),
         supabase.from('sensory_session_participants').select('*'),
         supabase.from('profiles').select('*'),
+        supabase.from('qc_locations').select('*'),
+        supabase.from('qc_samples').select('*'),
+        supabase.from('qc_tests').select('*'),
       ]);
       if (s.error) throw s.error;
       setSkus(s.data || []);
@@ -135,6 +144,9 @@ function useSupabaseData(session) {
       setSensorySessionPanels(ssp.data || []);
       setSensorySessionParticipants(sspt.data || []);
       setProfiles(pr.data || []);
+      setQcLocations(ql.data || []);
+      setQcSamples(qs.data || []);
+      setQcTests(qt.data || []);
     } catch (e) {
       setError(e.message || 'Failed to load data.');
     } finally {
@@ -325,12 +337,51 @@ function useSupabaseData(session) {
     await loadAll();
   };
 
+  // Logs a pulled QC/micro sample (from a batch, an in-process tank sample,
+  // or a fixed environmental location) and creates its two FastOrange reads
+  // (Wild Yeast + B Tube), both due QC_READ_DAYS out — same "insert parent,
+  // bulk-insert children" idiom as addBatch/retention_checkpoints.
+  const addQcSample = async ({ sampleType, batchId, locationId, notes }) => {
+    const pulledDate = todayISO();
+    const { data, error } = await supabase.from('qc_samples').insert({
+      sample_type: sampleType, batch_id: batchId || null, location_id: locationId || null,
+      pulled_by: session.user.id, pulled_date: pulledDate, notes: notes || '',
+    }).select().single();
+    if (error) throw error;
+    const dueDate = addDays(pulledDate, QC_READ_DAYS);
+    const tests = ['wild_yeast', 'b_tube'].map(testType => ({ sample_id: data.id, test_type: testType, due_date: dueDate }));
+    const { error: tErr } = await supabase.from('qc_tests').insert(tests);
+    if (tErr) throw tErr;
+    await loadAll();
+  };
+
+  const logQcResult = async ({ testId, result, notes }) => {
+    const { error } = await supabase.from('qc_tests').update({
+      result, read_date: todayISO(), read_by: session.user.id, notes: notes || '',
+    }).eq('id', testId);
+    if (error) throw error;
+    await loadAll();
+  };
+
+  const addQcLocation = async ({ name, sortOrder }) => {
+    const { error } = await supabase.from('qc_locations').insert({ name, sort_order: sortOrder || 0 });
+    if (error) throw error;
+    await loadAll();
+  };
+
+  const updateQcLocation = async (locationId, fields) => {
+    const { error } = await supabase.from('qc_locations').update(fields).eq('id', locationId);
+    if (error) throw error;
+    await loadAll();
+  };
+
   return {
     skus, batches, retention, sessions, panels, panelBatches, briteChecks, profiles, profileName,
-    sensorySessions, sensorySessionPanels, sensorySessionParticipants,
+    sensorySessions, sensorySessionPanels, sensorySessionParticipants, qcLocations, qcSamples, qcTests,
     loading, initialLoadDone, error, reload: loadAll,
     addSku, updateSku, addBatch, addSession, updateSession, deleteSession, createPanel, deletePanel, importBatches, addBriteCheck,
     createSensorySession, deleteSensorySession, updateProfileRole,
+    addQcSample, logQcResult, addQcLocation, updateQcLocation,
   };
 }
 
@@ -1298,6 +1349,282 @@ function RetentionQueue({ store, onLogTasting }) {
       <Group title="Due within 7 days" items={dueSoon} />
       <Group title="Upcoming" items={upcoming} />
       <Group title="Completed" items={done} />
+    </div>
+  );
+}
+
+// ============================================================
+// QC / Micro testing
+// ============================================================
+const QC_TEST_LABELS = { wild_yeast: 'Wild Yeast', b_tube: 'B Tube' };
+
+function qcSampleLabel(sample, store) {
+  if (!sample) return 'Unknown sample';
+  if (sample.sample_type === 'environmental') {
+    const loc = store.qcLocations.find(l => l.id === sample.location_id);
+    return loc ? loc.name : 'Unknown location';
+  }
+  const batch = store.batches.find(b => b.id === sample.batch_id);
+  const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
+  const prefix = sample.sample_type === 'in_process' ? 'In-process · ' : '';
+  return batch ? `${prefix}${batch.batch_number}${sku ? ' · ' + sku.name : ''}` : 'Unknown batch';
+}
+
+function LogQcSampleModal({ store, onClose }) {
+  const [sampleType, setSampleType] = useState('batch');
+  const [batchId, setBatchId] = useState('');
+  const [locationId, setLocationId] = useState('');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+
+  const activeLocations = useMemo(() => store.qcLocations.filter(l => l.active), [store.qcLocations]);
+  const sortedBatches = useMemo(() => [...store.batches].sort((a, b) => Number(b.batch_number) - Number(a.batch_number)), [store.batches]);
+  const canSubmit = sampleType === 'environmental' ? !!locationId : !!batchId;
+
+  const submit = async () => {
+    setBusy(true); setError('');
+    try {
+      await store.addQcSample({
+        sampleType,
+        batchId: sampleType !== 'environmental' ? batchId : null,
+        locationId: sampleType === 'environmental' ? locationId : null,
+        notes,
+      });
+      setDone(true);
+    } catch (e) {
+      setError(e.message || 'Could not save — try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 20 }}>
+      <div className="modal-card" style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: 24, width: 480 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <h3 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 18 }}>Log a QC sample</h3>
+          <X size={18} style={{ cursor: 'pointer', color: 'var(--text-muted)' }} onClick={onClose} />
+        </div>
+
+        {done ? (
+          <div style={{ padding: '12px 0' }}>
+            <p style={{ fontSize: 14, marginBottom: 6 }}>Sample logged — Wild Yeast and B Tube reads are due {addDays(todayISO(), QC_READ_DAYS)}.</p>
+            <Button onClick={onClose} style={{ marginTop: 8 }}>Done</Button>
+          </div>
+        ) : (
+          <>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13, margin: '0 0 14px' }}>Creates a Wild Yeast and a B Tube read, both due in {QC_READ_DAYS} days.</p>
+            <Field label="Sample source">
+              <div style={{ display: 'flex', gap: 8 }}>
+                {[['batch', 'Packaged batch'], ['in_process', 'In-process'], ['environmental', 'Environmental']].map(([val, label]) => (
+                  <button key={val} type="button" onClick={() => { setSampleType(val); setBatchId(''); setLocationId(''); }} style={{
+                    flex: 1, padding: '8px 4px', borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: 'pointer',
+                    border: `1px solid ${sampleType === val ? 'var(--accent)' : 'var(--line)'}`,
+                    background: sampleType === val ? 'rgba(243,112,58,0.16)' : 'transparent',
+                    color: sampleType === val ? 'var(--accent)' : 'var(--text-muted)',
+                  }}>{label}</button>
+                ))}
+              </div>
+            </Field>
+            {sampleType === 'environmental' ? (
+              <Field label="Location">
+                <select style={inputStyle} value={locationId} onChange={e => setLocationId(e.target.value)}>
+                  <option value="">Select a location…</option>
+                  {activeLocations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+              </Field>
+            ) : (
+              <Field label="Batch">
+                <select style={inputStyle} value={batchId} onChange={e => setBatchId(e.target.value)}>
+                  <option value="">Select a batch…</option>
+                  {sortedBatches.map(b => {
+                    const sku = store.skus.find(s => s.id === b.sku_id);
+                    return <option key={b.id} value={b.id}>{b.batch_number}{sku ? ` — ${sku.name}` : ''}</option>;
+                  })}
+                </select>
+              </Field>
+            )}
+            <Field label="Notes (optional)">
+              <textarea style={{ ...inputStyle, minHeight: 60, fontFamily: 'var(--font-body)' }} value={notes} onChange={e => setNotes(e.target.value)} />
+            </Field>
+            {error && <p style={{ color: 'var(--bad)', fontSize: 12.5, marginBottom: 8 }}>{error}</p>}
+            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+              <Button onClick={submit} disabled={!canSubmit || busy}>{busy ? 'Saving…' : 'Log sample'}</Button>
+              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function QcTestRow({ test, sample, store }) {
+  const [logging, setLogging] = useState(false);
+  const [result, setResult] = useState('negative');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async () => {
+    setBusy(true); setError('');
+    try {
+      await store.logQcResult({ testId: test.id, result, notes });
+      setLogging(false); setNotes(''); setResult('negative');
+    } catch (e) {
+      setError(e.message || 'Could not save — try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '12px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>{qcSampleLabel(sample, store)}</p>
+          <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+            {QC_TEST_LABELS[test.test_type]} · due {test.due_date}
+          </p>
+        </div>
+        {test.result === 'pending' ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Pill tone="warn">Pending</Pill>
+            <Button variant="ghost" onClick={() => setLogging(v => !v)} style={{ fontSize: 12.5, padding: '7px 12px' }}>Log read</Button>
+          </div>
+        ) : (
+          <Pill tone={test.result === 'negative' ? 'good' : 'bad'}>{test.result === 'negative' ? 'Negative' : 'Positive'}</Pill>
+        )}
+      </div>
+
+      {logging && (
+        <div style={{ background: 'var(--surface-2)', borderRadius: 8, padding: 14, marginTop: 10 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <button type="button" onClick={() => setResult('negative')} style={{
+              flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+              border: `1px solid ${result === 'negative' ? 'var(--good)' : 'var(--line)'}`,
+              background: result === 'negative' ? 'rgba(114,149,107,0.18)' : 'transparent',
+              color: result === 'negative' ? 'var(--good)' : 'var(--text-muted)',
+            }}>Negative</button>
+            <button type="button" onClick={() => setResult('positive')} style={{
+              flex: 1, padding: '9px 0', borderRadius: 7, fontWeight: 700, fontSize: 13, cursor: 'pointer',
+              border: `1px solid ${result === 'positive' ? 'var(--bad)' : 'var(--line)'}`,
+              background: result === 'positive' ? 'rgba(184,71,43,0.18)' : 'transparent',
+              color: result === 'positive' ? 'var(--bad)' : 'var(--text-muted)',
+            }}>Positive</button>
+          </div>
+          <textarea style={{ ...inputStyle, minHeight: 60, fontFamily: 'var(--font-body)', marginBottom: 10 }}
+            value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes" />
+          {error && <p style={{ color: 'var(--bad)', fontSize: 12.5, marginBottom: 8 }}>{error}</p>}
+          <Button onClick={submit} disabled={busy} style={{ fontSize: 12.5 }}>{busy ? 'Saving…' : 'Submit read'}</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QcLocationsAdmin({ store }) {
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const addLocation = async () => {
+    if (!newName.trim()) return;
+    setBusy(true);
+    try {
+      await store.addQcLocation({ name: newName.trim(), sortOrder: store.qcLocations.length + 1 });
+      setNewName(''); setAdding(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rename = async (loc) => {
+    const name = window.prompt('Rename location', loc.name);
+    if (!name || !name.trim() || name.trim() === loc.name) return;
+    await store.updateQcLocation(loc.id, { name: name.trim() });
+  };
+
+  const toggleActive = async (loc) => {
+    await store.updateQcLocation(loc.id, { active: !loc.active });
+  };
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <p style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>Environmental locations</p>
+        <Button variant="ghost" onClick={() => setAdding(v => !v)} style={{ fontSize: 12, padding: '6px 10px' }}><Plus size={13} /> Add location</Button>
+      </div>
+      {adding && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <input style={inputStyle} value={newName} onChange={e => setNewName(e.target.value)} placeholder="Location name" />
+          <Button onClick={addLocation} disabled={!newName.trim() || busy} style={{ fontSize: 12.5 }}>{busy ? '…' : 'Add'}</Button>
+        </div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {[...store.qcLocations].sort((a, b) => a.sort_order - b.sort_order).map(loc => (
+          <Card key={loc.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px' }}>
+            <span style={{ fontSize: 13.5, fontWeight: 600, opacity: loc.active ? 1 : 0.5 }}>{loc.name}</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button variant="ghost" onClick={() => rename(loc)} style={{ fontSize: 11.5, padding: '5px 9px' }}>Rename</Button>
+              <Button variant="ghost" onClick={() => toggleActive(loc)} style={{ fontSize: 11.5, padding: '5px 9px' }}>{loc.active ? 'Deactivate' : 'Activate'}</Button>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QcView({ store }) {
+  const [showLogModal, setShowLogModal] = useState(false);
+
+  const rows = useMemo(() => {
+    return store.qcTests
+      .map(t => {
+        const sample = store.qcSamples.find(s => s.id === t.sample_id);
+        return sample ? { ...t, sample } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.due_date.localeCompare(b.due_date));
+  }, [store.qcTests, store.qcSamples]);
+
+  const today = todayISO();
+  const overdue = rows.filter(r => r.result === 'pending' && r.due_date < today);
+  const dueSoon = rows.filter(r => r.result === 'pending' && r.due_date >= today && daysBetween(today, r.due_date) <= 2);
+  const upcoming = rows.filter(r => r.result === 'pending' && daysBetween(today, r.due_date) > 2);
+  const recentlyRead = rows.filter(r => r.result !== 'pending').sort((a, b) => b.due_date.localeCompare(a.due_date)).slice(0, 20);
+
+  const Group = ({ title, items }) => items.length > 0 && (
+    <div style={{ marginBottom: 22 }}>
+      <p style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-muted)', marginBottom: 10 }}>{title} · {items.length}</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {items.map(r => <QcTestRow key={r.id} test={r} sample={r.sample} store={store} />)}
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div>
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>QC / Micro testing</h3>
+          <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>FastOrange Wild Yeast + B Tube reads, due {QC_READ_DAYS} days after a sample is pulled.</p>
+        </div>
+        <Button onClick={() => setShowLogModal(true)}><Plus size={15} /> Log sample</Button>
+      </div>
+
+      {rows.length === 0 && <p style={{ color: 'var(--text-muted)' }}>No samples logged yet.</p>}
+      <Group title="Overdue" items={overdue} />
+      <Group title="Due within 2 days" items={dueSoon} />
+      <Group title="Upcoming" items={upcoming} />
+      <Group title="Recently read" items={recentlyRead} />
+
+      <QcLocationsAdmin store={store} />
+
+      {showLogModal && <LogQcSampleModal store={store} onClose={() => setShowLogModal(false)} />}
     </div>
   );
 }
@@ -2511,6 +2838,7 @@ export default function App() {
     { id: 'submit', label: 'Submit tasting', icon: ClipboardList, allowed: true },
     { id: 'brite', label: 'Packaging sign off', icon: Droplet, allowed: true },
     { id: 'retention', label: 'Retention queue', icon: Archive, allowed: isLead },
+    { id: 'qc', label: 'QC / Micro', icon: FlaskConical, allowed: isLead },
     { id: 'batches', label: 'Batches', icon: Beaker, allowed: isLead },
     { id: 'skus', label: 'TTT profiles', icon: Settings, allowed: true },
     { id: 'search', label: 'Search', icon: Search, allowed: true },
@@ -2631,6 +2959,7 @@ export default function App() {
           {tab === 'submit' && <TastingForm store={store} currentProfile={profile} onDone={() => { setEditingSession(null); setActivePanelId(null); setTab(editingSession ? 'dashboard' : 'sessions'); }} presetBatchId={presetBatchId} presetTastingType={presetTastingType} activePanelId={editingSession ? null : activePanelId} editSession={editingSession} />}
           {tab === 'brite' && <PackagingSignOffView store={store} currentProfile={profile} />}
           {tab === 'retention' && isLead && <RetentionQueue store={store} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setActivePanelId(null); setTab('submit'); }} />}
+          {tab === 'qc' && isLead && <QcView store={store} />}
           {tab === 'batches' && isLead && <BatchesView store={store} isLead={isLead} />}
           {tab === 'skus' && <SkuProfiles store={store} isLead={isLead} />}
           {tab === 'search' && <SearchView store={store} />}
