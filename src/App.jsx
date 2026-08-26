@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, LogOut, TrendingUp, Droplet, Calendar } from 'lucide-react';
+import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, ChevronDown, LogOut, TrendingUp, Droplet, Calendar } from 'lucide-react';
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
 
@@ -2340,6 +2340,7 @@ export default function App() {
   const [presetBatchId, setPresetBatchId] = useState(null);
   const [presetTastingType, setPresetTastingType] = useState(null);
   const [activePanelId, setActivePanelId] = useState(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [editingSession, setEditingSession] = useState(null);
 
   useEffect(() => {
@@ -2399,6 +2400,8 @@ export default function App() {
         * { box-sizing: border-box; }
         body { margin: 0; }
         input[type=range] { -webkit-appearance: none; background: transparent; height: 20px; }
+        .mobile-nav-trigger { display: none; }
+        .mobile-dropdown-list { display: contents; }
         input[type=range]::-webkit-slider-runnable-track { height: 4px; background: var(--line); border-radius: 2px; }
         input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; margin-top: -6px; width: 16px; height: 16px; border-radius: 50%; background: currentColor; cursor: pointer; border: 2px solid var(--surface); }
         @media print {
@@ -2412,10 +2415,15 @@ export default function App() {
           .app-shell { flex-direction: column !important; }
           .app-nav {
             width: 100% !important; border-right: none !important; border-bottom: 1px solid var(--line);
-            display: flex !important; flex-direction: row !important; overflow-x: auto;
-            padding: 8px 10px !important; gap: 4px; -webkit-overflow-scrolling: touch;
+            padding: 10px 12px !important; position: relative;
           }
-          .app-nav button { white-space: nowrap; flex-shrink: 0; margin-bottom: 0 !important; }
+          .mobile-nav-trigger { display: flex !important; }
+          .mobile-dropdown-list { display: none; }
+          .mobile-dropdown-list.open {
+            display: flex !important; flex-direction: column; position: absolute; top: 100%; left: 12px; right: 12px;
+            background: var(--surface); border: 1px solid var(--line); border-radius: 8px; z-index: 40; padding: 6px;
+            box-shadow: 0 10px 28px rgba(0,0,0,0.25); margin-top: 4px;
+          }
           .app-main { padding: 14px !important; max-width: 100% !important; }
           .header-row-stack { flex-direction: column !important; align-items: flex-start !important; gap: 12px !important; }
           .header-row-stack > * { width: 100% !important; }
@@ -2443,14 +2451,27 @@ export default function App() {
 
       <div className="app-shell" style={{ display: 'flex' }}>
         <nav className="app-nav" style={{ width: 210, borderRight: '1px solid var(--line)', padding: '20px 12px', flexShrink: 0 }}>
-          {tabs.map(t => (
-            <button key={t.id} onClick={() => { setTab(t.id); setPresetBatchId(null); setPresetTastingType(null); setActivePanelId(null); setEditingSession(null); }} style={{
-              width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', marginBottom: 4,
-              borderRadius: 7, border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 13.5, fontWeight: 600,
-              background: tab === t.id ? 'var(--surface-2)' : 'transparent',
-              color: tab === t.id ? 'var(--accent)' : 'var(--text-muted)',
-            }}><t.icon size={16} /> {t.label}</button>
-          ))}
+          <button className="mobile-nav-trigger" onClick={() => setMobileNavOpen(v => !v)} style={{
+            width: '100%', display: 'none', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 12px',
+            borderRadius: 7, border: '1px solid var(--line)', cursor: 'pointer', fontSize: 13.5, fontWeight: 600,
+            background: 'var(--surface)', color: 'var(--accent)',
+          }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {(() => { const current = tabs.find(t => t.id === tab); const Icon = current ? current.icon : Calendar; return <Icon size={16} />; })()}
+              {tabs.find(t => t.id === tab)?.label || 'Menu'}
+            </span>
+            <ChevronDown size={16} style={{ transform: mobileNavOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+          </button>
+          <div className={`mobile-dropdown-list${mobileNavOpen ? ' open' : ''}`}>
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => { setTab(t.id); setPresetBatchId(null); setPresetTastingType(null); setActivePanelId(null); setEditingSession(null); setMobileNavOpen(false); }} style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', marginBottom: 4,
+                borderRadius: 7, border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 13.5, fontWeight: 600,
+                background: tab === t.id ? 'var(--surface-2)' : 'transparent',
+                color: tab === t.id ? 'var(--accent)' : 'var(--text-muted)',
+              }}><t.icon size={16} /> {t.label}</button>
+            ))}
+          </div>
           {store.error && <p style={{ fontSize: 11, color: 'var(--bad)', marginTop: 16, padding: '0 12px' }}>{store.error}</p>}
         </nav>
 
