@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, ChevronDown, LogOut, TrendingUp, Droplet, Calendar } from 'lucide-react';
+import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, ChevronDown, LogOut, TrendingUp, Droplet, Calendar, UserCog } from 'lucide-react';
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
 
@@ -319,12 +319,18 @@ function useSupabaseData(session) {
     await loadAll();
   };
 
+  const updateProfileRole = async (profileId, role) => {
+    const { error } = await supabase.from('profiles').update({ role }).eq('id', profileId);
+    if (error) throw error;
+    await loadAll();
+  };
+
   return {
     skus, batches, retention, sessions, panels, panelBatches, briteChecks, profiles, profileName,
     sensorySessions, sensorySessionPanels, sensorySessionParticipants,
     loading, initialLoadDone, error, reload: loadAll,
     addSku, updateSku, addBatch, addSession, updateSession, deleteSession, createPanel, deletePanel, importBatches, addBriteCheck,
-    createSensorySession, deleteSensorySession,
+    createSensorySession, deleteSensorySession, updateProfileRole,
   };
 }
 
@@ -640,6 +646,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
           <h3 style={{ margin: '0 0 4px', fontFamily: 'var(--font-display)', fontSize: 20 }}>{editSession ? 'Edit tasting' : 'Log a tasting'}</h3>
           <p style={{ margin: '0 0 20px', color: 'var(--text-muted)', fontSize: 13 }}>Tasting as <strong style={{ color: 'var(--text)' }}>{currentProfile.name}</strong></p>
           {justAdvanced && <p style={{ margin: '0 0 16px', padding: '8px 12px', background: 'rgba(122,157,122,0.16)', color: 'var(--good)', borderRadius: 6, fontSize: 12.5 }}>{justAdvanced}</p>}
+
           <Field label="Tasting type">
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" onClick={() => setTastingType('ttt')} style={{
@@ -1359,6 +1366,49 @@ function ImportBatchesModal({ store, onClose }) {
             </div>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function TeamManagement({ store, currentProfile }) {
+  const [busyId, setBusyId] = useState(null);
+  const sortedProfiles = useMemo(() => [...store.profiles].sort((a, b) => a.name.localeCompare(b.name)), [store.profiles]);
+
+  const toggleRole = async (profile) => {
+    const newRole = profile.role === 'lead' ? 'staff' : 'lead';
+    if (!window.confirm(`Change ${profile.name} to ${newRole === 'lead' ? 'QA Lead' : 'Staff'}?`)) return;
+    setBusyId(profile.id);
+    try {
+      await store.updateProfileRole(profile.id, newRole);
+    } catch (e) {
+      alert(e.message || 'Could not update — try again.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div>
+      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Team</h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: '0 0 20px' }}>Manage who has QA lead access. You can't change your own role here — ask another lead if needed.</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {sortedProfiles.map(p => (
+          <Card key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px' }}>
+            <div>
+              <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>{p.name} {p.id === currentProfile.id && <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>(you)</span>}</p>
+              <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>{p.email}</p>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Pill tone={p.role === 'lead' ? 'good' : 'neutral'}>{p.role === 'lead' ? 'QA Lead' : 'Staff'}</Pill>
+              {p.id !== currentProfile.id && (
+                <Button variant="ghost" onClick={() => toggleRole(p)} disabled={busyId === p.id} style={{ fontSize: 12, padding: '6px 10px' }}>
+                  {busyId === p.id ? '…' : `Make ${p.role === 'lead' ? 'Staff' : 'QA Lead'}`}
+                </Button>
+              )}
+            </div>
+          </Card>
+        ))}
       </div>
     </div>
   );
@@ -2367,6 +2417,7 @@ export default function App() {
     { id: 'skus', label: 'TTT profiles', icon: Settings, allowed: true },
     { id: 'trends', label: 'Trends', icon: TrendingUp, allowed: isLead },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, allowed: isLead },
+    { id: 'team', label: 'Team', icon: UserCog, allowed: isLead },
   ].filter(t => t.allowed);
 
   useEffect(() => { if (!tabs.find(t => t.id === tab)) setTab('panels'); }, [isLead]);
@@ -2485,6 +2536,7 @@ export default function App() {
           {tab === 'skus' && <SkuProfiles store={store} isLead={isLead} />}
           {tab === 'trends' && isLead && <TrendsView store={store} />}
           {tab === 'dashboard' && isLead && <Dashboard store={store} onEditSession={(s) => { setEditingSession(s); setTab('submit'); }} />}
+          {tab === 'team' && isLead && <TeamManagement store={store} currentProfile={profile} />}
         </main>
       </div>
     </div>
