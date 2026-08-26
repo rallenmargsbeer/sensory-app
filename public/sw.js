@@ -14,5 +14,11 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  event.respondWith(fetch(event.request));
+  event.respondWith(
+    fetch(event.request).catch(() => {
+      // Let the browser handle the failure itself (its normal offline/error
+      // page) instead of the service worker throwing an unhandled rejection.
+      return Response.error();
+    })
+  );
 });
