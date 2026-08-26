@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, ChevronDown, LogOut, TrendingUp, Droplet, Calendar, UserCog } from 'lucide-react';
+import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, ChevronDown, LogOut, TrendingUp, Droplet, Calendar, UserCog, Search } from 'lucide-react';
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
 
@@ -1656,6 +1656,104 @@ function BatchReportModal({ batch, store, onClose }) {
   );
 }
 
+function SearchView({ store }) {
+  const [query, setQuery] = useState('');
+  const [reportBatch, setReportBatch] = useState(null);
+  const q = query.trim().toLowerCase();
+
+  const matchingBatches = useMemo(() => {
+    if (!q) return [];
+    return store.batches
+      .filter(b => {
+        const sku = store.skus.find(s => s.id === b.sku_id);
+        return b.batch_number.toLowerCase().includes(q) || (sku && sku.name.toLowerCase().includes(q));
+      })
+      .sort((a, b) => Number(b.batch_number) - Number(a.batch_number))
+      .slice(0, 30);
+  }, [q, store.batches, store.skus]);
+
+  const matchingTastings = useMemo(() => {
+    if (!q) return [];
+    return store.sessions
+      .filter(s => {
+        const batch = store.batches.find(b => b.id === s.batch_id);
+        const sku = batch ? store.skus.find(x => x.id === batch.sku_id) : null;
+        const hay = [
+          batch ? batch.batch_number : '',
+          sku ? sku.name : '',
+          store.profileName(s.taster_id),
+          s.notes || '',
+          ...(s.off_flavors || []).map(f => f.flavor),
+        ].join(' ').toLowerCase();
+        return hay.includes(q);
+      })
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 30);
+  }, [q, store.sessions, store.batches, store.skus]);
+
+  return (
+    <div>
+      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Search</h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: '0 0 20px' }}>Find a batch or tasting by batch number, SKU, taster, notes, or off-flavor.</p>
+      <input
+        style={{ ...inputStyle, marginBottom: 20, fontSize: 15, padding: '12px 14px' }}
+        value={query} onChange={e => setQuery(e.target.value)}
+        placeholder="e.g. 385, Kolsch, diacetyl, Sarah…" autoFocus
+      />
+
+      {reportBatch && <BatchReportModal batch={reportBatch} store={store} onClose={() => setReportBatch(null)} />}
+
+      {!q ? (
+        <p style={{ color: 'var(--text-faint)', fontSize: 13.5 }}>Start typing to search.</p>
+      ) : (
+        <>
+          <Card style={{ marginBottom: 16 }}>
+            <p style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Batches ({matchingBatches.length})</p>
+            {matchingBatches.length === 0 ? <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>No matching batches.</p> : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {matchingBatches.map(b => {
+                  const sku = store.skus.find(s => s.id === b.sku_id);
+                  return (
+                    <div key={b.id} onClick={() => setReportBatch(b)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'var(--surface-2)', borderRadius: 6, cursor: 'pointer' }}>
+                      <span style={{ fontSize: 13.5 }}><strong>{b.batch_number}</strong> — {sku ? sku.name : 'Unknown SKU'}</span>
+                      <span style={{ fontSize: 11.5, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>{b.package_date ? `packaged ${b.package_date}` : 'in brite tank'}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <p style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Tastings ({matchingTastings.length})</p>
+            {matchingTastings.length === 0 ? <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>No matching tastings.</p> : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {matchingTastings.map(s => {
+                  const batch = store.batches.find(b => b.id === s.batch_id);
+                  const sku = batch ? store.skus.find(x => x.id === batch.sku_id) : null;
+                  return (
+                    <div key={s.id} style={{ borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>{batch ? batch.batch_number : '—'} — {sku ? sku.name : ''} <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>· {s.date} · {store.profileName(s.taster_id)} · {s.tasting_type === 'retention' ? 'Retention' : 'TTT'}</span></span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Pill tone={s.overall === 'pass' ? 'good' : s.overall === 'flag' ? 'warn' : 'bad'}>{s.overall}</Pill>
+                          {batch && <Button variant="ghost" onClick={() => setReportBatch(batch)} style={{ fontSize: 11, padding: '4px 8px' }}>View batch</Button>}
+                        </div>
+                      </div>
+                      {(s.off_flavors || []).length > 0 && <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--bad)' }}>{s.off_flavors.map(f => `${f.flavor} (${f.intensity}/5)`).join(', ')}</p>}
+                      {s.notes && <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>"{s.notes}"</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
 function BatchesView({ store, isLead }) {
   const [showNew, setShowNew] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -2415,6 +2513,7 @@ export default function App() {
     { id: 'retention', label: 'Retention queue', icon: Archive, allowed: isLead },
     { id: 'batches', label: 'Batches', icon: Beaker, allowed: isLead },
     { id: 'skus', label: 'TTT profiles', icon: Settings, allowed: true },
+    { id: 'search', label: 'Search', icon: Search, allowed: true },
     { id: 'trends', label: 'Trends', icon: TrendingUp, allowed: isLead },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, allowed: isLead },
     { id: 'team', label: 'Team', icon: UserCog, allowed: isLead },
@@ -2534,6 +2633,7 @@ export default function App() {
           {tab === 'retention' && isLead && <RetentionQueue store={store} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setActivePanelId(null); setTab('submit'); }} />}
           {tab === 'batches' && isLead && <BatchesView store={store} isLead={isLead} />}
           {tab === 'skus' && <SkuProfiles store={store} isLead={isLead} />}
+          {tab === 'search' && <SearchView store={store} />}
           {tab === 'trends' && isLead && <TrendsView store={store} />}
           {tab === 'dashboard' && isLead && <Dashboard store={store} onEditSession={(s) => { setEditingSession(s); setTab('submit'); }} />}
           {tab === 'team' && isLead && <TeamManagement store={store} currentProfile={profile} />}
