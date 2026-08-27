@@ -1706,6 +1706,56 @@ function exportQcResultsCSV(store) {
   URL.revokeObjectURL(url);
 }
 
+function computeLocationPositiveRates(store) {
+  const byLocation = {};
+  store.qcTests.forEach(t => {
+    if (t.result === 'pending') return;
+    const sample = store.qcSamples.find(s => s.id === t.sample_id);
+    if (!sample || !sample.location_id) return;
+    if (!byLocation[sample.location_id]) byLocation[sample.location_id] = { total: 0, positive: 0 };
+    byLocation[sample.location_id].total++;
+    if (t.result === 'positive') byLocation[sample.location_id].positive++;
+  });
+
+  return Object.entries(byLocation)
+    .map(([locationId, d]) => {
+      const loc = store.qcLocations.find(l => l.id === locationId);
+      return { locationId, name: loc ? loc.name : 'Unknown location', total: d.total, positive: d.positive, rate: d.positive / d.total };
+    })
+    .sort((a, b) => b.rate - a.rate);
+}
+
+function QcLocationTrends({ store }) {
+  const rows = useMemo(() => computeLocationPositiveRates(store), [store.qcTests, store.qcSamples, store.qcLocations]);
+  const maxRate = Math.max(0.01, ...rows.map(r => r.rate));
+
+  return (
+    <Card style={{ marginTop: 20 }}>
+      <p style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Positive rate by location</p>
+      <p style={{ margin: '0 0 16px', fontSize: 12.5, color: 'var(--text-faint)' }}>Across environmental and in-process samples with a location set. A recurring pattern here usually points at a sanitation or process issue, not a one-off.</p>
+      {rows.length === 0 ? (
+        <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>No location-tagged results yet.</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {rows.map(r => (
+            <div key={r.locationId}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</span>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                  {r.positive}/{r.total} positive · {Math.round(r.rate * 100)}%
+                </span>
+              </div>
+              <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{ width: `${(r.rate / maxRate) * 100}%`, height: '100%', background: r.rate >= 0.2 ? 'var(--bad)' : 'var(--accent)' }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function QcDashboard({ store }) {
   const allTests = store.qcTests;
   const pending = allTests.filter(t => t.result === 'pending').length;
@@ -1771,6 +1821,7 @@ function QcDashboard({ store }) {
           </div>
         )}
       </Card>
+      <QcLocationTrends store={store} />
     </div>
   );
 }
