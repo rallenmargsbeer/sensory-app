@@ -2049,6 +2049,7 @@ function BatchReportModal({ batch, store, onClose }) {
   const ttSessions = allSessions.filter(s => s.tasting_type === 'ttt');
   const checkpoints = store.retention.filter(r => r.batch_id === batch.id).sort((a, b) => a.days - b.days);
   const briteChecks = store.briteChecks.filter(c => c.batch_id === batch.id).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const qcSamplesForBatch = store.qcSamples.filter(s => s.batch_id === batch.id).sort((a, b) => a.pulled_date.localeCompare(b.pulled_date));
 
   const avgTtScores = (section) => {
     const out = {};
@@ -2112,6 +2113,31 @@ function BatchReportModal({ batch, store, onClose }) {
               </div>
             )}
           </div>
+
+          {qcSamplesForBatch.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <p style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>QC / Micro results</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {qcSamplesForBatch.map(s => {
+                  const tests = store.qcTests.filter(t => t.sample_id === s.id);
+                  return (
+                    <div key={s.id} style={{ borderBottom: '1px solid var(--line)', paddingBottom: 8 }}>
+                      <p style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 600 }}>
+                        {s.sample_type === 'in_process' ? 'In-process' : 'Packaged'} sample · pulled {s.pulled_date}
+                      </p>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        {tests.map(t => (
+                          <span key={t.id} style={{ fontSize: 12, fontFamily: 'var(--font-mono)', padding: '4px 10px', borderRadius: 5, background: t.result === 'positive' ? 'rgba(184,71,43,0.16)' : t.result === 'negative' ? 'rgba(114,149,107,0.16)' : 'var(--surface-2)', color: t.result === 'positive' ? 'var(--bad)' : t.result === 'negative' ? 'var(--good)' : 'var(--text-muted)' }}>
+                            {QC_TEST_LABELS[t.test_type]} — {t.result === 'pending' ? `due ${t.due_date}` : t.result}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div>
             <p style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 8 }}>All tastings ({allSessions.length})</p>
