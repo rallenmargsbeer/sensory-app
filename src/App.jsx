@@ -2816,6 +2816,7 @@ export default function App() {
   const [presetTastingType, setPresetTastingType] = useState(null);
   const [activePanelId, setActivePanelId] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [appMode, setAppMode] = useState('sensory'); // 'sensory' | 'qc'
   const [editingSession, setEditingSession] = useState(null);
 
   useEffect(() => {
@@ -2832,20 +2833,23 @@ export default function App() {
   const store = useSupabaseData(session);
   const isLead = profile?.role === 'lead';
 
-  const tabs = [
+  const sensoryTabs = [
     { id: 'sessions', label: 'Sessions', icon: Calendar, allowed: true },
     { id: 'panels', label: 'Panels', icon: Users, allowed: true },
     { id: 'submit', label: 'Submit tasting', icon: ClipboardList, allowed: true },
     { id: 'brite', label: 'Packaging sign off', icon: Droplet, allowed: true },
     { id: 'retention', label: 'Retention queue', icon: Archive, allowed: isLead },
-    { id: 'qc', label: 'QC / Micro', icon: FlaskConical, allowed: isLead },
     { id: 'batches', label: 'Batches', icon: Beaker, allowed: isLead },
     { id: 'skus', label: 'TTT profiles', icon: Settings, allowed: true },
     { id: 'search', label: 'Search', icon: Search, allowed: true },
     { id: 'trends', label: 'Trends', icon: TrendingUp, allowed: isLead },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, allowed: isLead },
     { id: 'team', label: 'Team', icon: UserCog, allowed: isLead },
-  ].filter(t => t.allowed);
+  ];
+  const qcTabs = [
+    { id: 'qc', label: 'QC / Micro', icon: FlaskConical, allowed: isLead },
+  ];
+  const tabs = (appMode === 'qc' ? qcTabs : sensoryTabs).filter(t => t.allowed);
 
   useEffect(() => { if (!tabs.find(t => t.id === tab)) setTab('panels'); }, [isLead]);
 
@@ -2917,7 +2921,22 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <img src="/logo-cream.png" alt="Margaret River Beer Co" style={{ height: 28, width: 'auto' }} />
           <div style={{ width: 1, height: 22, background: 'rgba(242,237,226,0.25)' }} />
-          <p style={{ margin: 0, fontSize: 11, color: 'rgba(242,237,226,0.6)', fontFamily: 'var(--font-mono)', letterSpacing: 0.8, textTransform: 'uppercase' }}>Sensory Log</p>
+          {isLead ? (
+            <select
+              value={appMode}
+              onChange={e => { const m = e.target.value; setAppMode(m); setTab(m === 'qc' ? 'qc' : 'sessions'); setPresetBatchId(null); setPresetTastingType(null); setActivePanelId(null); setEditingSession(null); }}
+              style={{
+                background: 'transparent', border: 'none', color: 'rgba(242,237,226,0.85)',
+                fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: 0.8, textTransform: 'uppercase',
+                cursor: 'pointer', outline: 'none',
+              }}
+            >
+              <option value="sensory" style={{ color: '#141A24' }}>Sensory Log</option>
+              <option value="qc" style={{ color: '#141A24' }}>QC Log</option>
+            </select>
+          ) : (
+            <p style={{ margin: 0, fontSize: 11, color: 'rgba(242,237,226,0.6)', fontFamily: 'var(--font-mono)', letterSpacing: 0.8, textTransform: 'uppercase' }}>Sensory Log</p>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <User size={15} color="rgba(242,237,226,0.6)" />
