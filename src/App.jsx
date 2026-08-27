@@ -1,15 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Legend, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, ChevronDown, LogOut, TrendingUp, Droplet, Calendar, UserCog, Search, FlaskConical } from 'lucide-react';
+import { Beaker, ClipboardList, Archive, Settings, LayoutDashboard, Plus, X, Check, User, Upload, Users, ChevronRight, ChevronDown, LogOut, TrendingUp, Droplet, Calendar, UserCog, Search, FlaskConical, MapPin, LayoutGrid } from 'lucide-react';
 import Papa from 'papaparse';
 import { supabase } from './supabaseClient';
 
-// ============================================================
-// Trait taxonomy — fixed master list of every trait scored, per your
-// spider diagram spec. Two sections (Aroma, Flavour & Body), each with
-// Category > Trait groups. Every SKU/tasting uses this exact same list;
-// only the scores differ.
-// ============================================================
 const INTENSITY_LEVELS = [
   { label: 'Absent', score: 1 },
   { label: 'Low', score: 3 },
@@ -42,10 +36,6 @@ const TRAIT_TAXONOMY = {
 };
 
 const SECTION_LABELS = { aroma: 'Aroma', flavor: 'Flavour & Body' };
-
-// The only beers we build TTT profiles for — everything else that ends up
-// in `skus` (e.g. from auto-sync picking up one-offs or stray tab names)
-// gets filtered out of this view, not deleted.
 const CORE_BEERS = ['Drift', 'Pale', 'Kolsch', 'River Dog', 'In The Pines', 'Red IPA', 'Mermid', 'Stout', 'Brown', 'Draught'];
 
 function defaultSectionScores(section) {
@@ -56,13 +46,10 @@ function defaultSectionScores(section) {
 function defaultAllScores() { return { aroma: defaultSectionScores('aroma'), flavor: defaultSectionScores('flavor') }; }
 function normalizeTarget(target) {
   if (target && typeof target.aroma === 'object' && typeof target.flavor === 'object') return target;
-  return defaultAllScores(); // handles the old 5-attribute format from before this rebuild
+  return defaultAllScores();
 }
 function getScore(scoresObj, section, id) { return (scoresObj && scoresObj[section] && scoresObj[section][id]) ?? 1; }
 
-// Some trait names repeat within a section under different categories
-// (e.g. "Fruity" under both Hops and Esters) — disambiguate only those
-// for radar chart labels.
 function traitLabelsFor(section) {
   const nameCounts = {};
   TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => { nameCounts[t] = (nameCounts[t] || 0) + 1; }));
@@ -82,8 +69,6 @@ const OFF_FLAVORS = [
 ];
 
 const RETENTION_INTERVALS = [30, 90, 180];
-// FastOrange Wild Yeast + B Tube reads are both due this many days after a
-// QC sample is pulled — one fixed window for both test types.
 const QC_READ_DAYS = 5;
 const CHECK_SESSION_COMPLETION_URL = 'https://qglmuisievxvntfgztfl.supabase.co/functions/v1/check-session-completion';
 
@@ -91,9 +76,6 @@ function todayISO() { return new Date().toISOString().slice(0, 10); }
 function daysBetween(a, b) { return Math.round((new Date(b) - new Date(a)) / 86400000); }
 function addDays(dateStr, n) { const d = new Date(dateStr); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
 
-// ============================================================
-// Data layer — talks to Supabase instead of window.storage
-// ============================================================
 function useSupabaseData(session) {
   const [skus, setSkus] = useState([]);
   const [batches, setBatches] = useState([]);
@@ -159,7 +141,6 @@ function useSupabaseData(session) {
 
   const profileName = (id) => (profiles.find(p => p.id === id) || {}).name || 'Unknown';
 
-  // ---- mutations ----
   const addSku = async (sku) => {
     const { error } = await supabase.from('skus').insert({
       name: sku.name, style: sku.style, abv: sku.abv, descriptors: sku.descriptors,
@@ -192,11 +173,6 @@ function useSupabaseData(session) {
     return data.id;
   };
 
-  // Imports batches directly from parsed sheet rows: creates any missing
-  // SKUs, creates/updates batches, sets up retention checkpoints. Used by
-  // the Batches tab importer. Batches with no packaged date still get
-  // imported (they'll show up in Packaging Sign Off instead of the main
-  // flow) but don't get retention checkpoints until they graduate.
   const importBatches = async (rows) => {
     let added = 0, skipped = 0, graduated = 0;
     for (const row of rows) {
@@ -225,7 +201,7 @@ function useSupabaseData(session) {
         }).select().single();
         if (skuErr) throw skuErr;
         sku = newSku;
-        skus.push(sku); // keep local lookup current within this loop
+        skus.push(sku);
       }
 
       const packageDate = row.packagedDate || null;
@@ -248,7 +224,6 @@ function useSupabaseData(session) {
   };
 
   const triggerCompletionCheck = () => {
-    // Fire-and-forget — never let this block or fail the actual tasting submission.
     fetch(CHECK_SESSION_COMPLETION_URL, {
       method: 'POST',
       headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
@@ -337,10 +312,6 @@ function useSupabaseData(session) {
     await loadAll();
   };
 
-  // Logs a pulled QC/micro sample (from a batch, an in-process tank sample,
-  // or a fixed environmental location) and creates its two FastOrange reads
-  // (Wild Yeast + B Tube), both due QC_READ_DAYS out — same "insert parent,
-  // bulk-insert children" idiom as addBatch/retention_checkpoints.
   const addQcSample = async ({ sampleType, batchId, locationId, notes }) => {
     const pulledDate = todayISO();
     const { data, error } = await supabase.from('qc_samples').insert({
@@ -375,19 +346,23 @@ function useSupabaseData(session) {
     await loadAll();
   };
 
+  const deleteQcSample = async (sampleId) => {
+    await supabase.from('qc_tests').delete().eq('sample_id', sampleId);
+    const { error } = await supabase.from('qc_samples').delete().eq('id', sampleId);
+    if (error) throw error;
+    await loadAll();
+  };
+
   return {
     skus, batches, retention, sessions, panels, panelBatches, briteChecks, profiles, profileName,
     sensorySessions, sensorySessionPanels, sensorySessionParticipants, qcLocations, qcSamples, qcTests,
     loading, initialLoadDone, error, reload: loadAll,
     addSku, updateSku, addBatch, addSession, updateSession, deleteSession, createPanel, deletePanel, importBatches, addBriteCheck,
     createSensorySession, deleteSensorySession, updateProfileRole,
-    addQcSample, logQcResult, addQcLocation, updateQcLocation,
+    addQcSample, logQcResult, addQcLocation, updateQcLocation, deleteQcSample,
   };
 }
 
-// ============================================================
-// Shared UI pieces
-// ============================================================
 const Pill = ({ children, tone = 'neutral' }) => {
   const tones = {
     neutral: { background: 'var(--surface-2)', color: 'var(--text-muted)' },
@@ -473,7 +448,6 @@ function TraitSpiderChart({ section, target, actual, height = 420 }) {
 const COMPARE_COLORS = ['var(--accent)', '#7A9CC6', '#B98CC7', 'var(--teal)', 'var(--gold)', 'var(--forest)', '#C7597A', '#5B8C7B'];
 
 function MultiBatchSpiderChart({ section, target, series, height = 420 }) {
-  // series: [{ label, scores }] — up to 3
   const labels = traitLabelsFor(section);
   const chartData = TRAIT_TAXONOMY[section].flatMap(g => g.traits.map(t => {
     const id = traitId(g.category, t);
@@ -541,9 +515,6 @@ function TagInput({ values, onChange, placeholder }) {
   );
 }
 
-// ============================================================
-// Auth screen
-// ============================================================
 function AuthScreen() {
   const [mode, setMode] = useState('signin');
   const [email, setEmail] = useState('');
@@ -600,9 +571,6 @@ function AuthScreen() {
   );
 }
 
-// ============================================================
-// Tasting form
-// ============================================================
 function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTastingType, activePanelId, editSession }) {
   const [batchId, setBatchId] = useState(editSession ? editSession.batch_id : (presetBatchId || (store.batches[0] ? store.batches[0].id : '')));
   useEffect(() => { if (presetBatchId && !editSession) setBatchId(presetBatchId); }, [presetBatchId]);
@@ -632,7 +600,7 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
     const doneBatchIds = new Set(
       store.sessions.filter(s => s.taster_id === currentProfile.id && s.tasting_type === tastingType).map(s => s.batch_id)
     );
-    doneBatchIds.add(justSubmittedBatchId); // in case the reload hasn't reflected it yet
+    doneBatchIds.add(justSubmittedBatchId);
     const panelBatchIds = store.panelBatches.filter(pb => pb.panel_id === activePanelId).map(pb => pb.batch_id);
     return panelBatchIds.find(bid => !doneBatchIds.has(bid)) || null;
   };
@@ -819,9 +787,6 @@ function TastingForm({ store, currentProfile, onDone, presetBatchId, presetTasti
   );
 }
 
-// ============================================================
-// Panels
-// ============================================================
 function DeletePanelButton({ panel, store }) {
   const [busy, setBusy] = useState(false);
 
@@ -934,7 +899,7 @@ function SessionBuilder({ store }) {
 }
 
 function SessionResultBatch({ be, store, relevantTastings }) {
-  const [mode, setMode] = useState('averaged'); // 'averaged' | 'individual'
+  const [mode, setMode] = useState('averaged');
 
   const batch = store.batches.find(b => b.id === be.batchId);
   const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
@@ -1014,7 +979,6 @@ function SessionResultBatch({ be, store, relevantTastings }) {
 function SessionResultsModal({ sess, store, onClose }) {
   const progress = computeSessionProgress(sess, store);
 
-  // All tastings belonging to this session's batches/types
   const relevantTastings = useMemo(() => {
     return progress.batchEntries.flatMap(be =>
       store.sessions.filter(s => s.batch_id === be.batchId && s.tasting_type === be.panelType && progress.participantIds.includes(s.taster_id))
@@ -1305,9 +1269,6 @@ function PanelsView({ store, isLead, currentProfile, onLogTasting }) {
   );
 }
 
-// ============================================================
-// Retention queue
-// ============================================================
 function RetentionQueue({ store, onLogTasting }) {
   const rows = useMemo(() => {
     return store.retention.map(r => {
@@ -1353,9 +1314,6 @@ function RetentionQueue({ store, onLogTasting }) {
   );
 }
 
-// ============================================================
-// QC / Micro testing
-// ============================================================
 const QC_TEST_LABELS = { wild_yeast: 'Wild Yeast', b_tube: 'B Tube' };
 
 function qcSampleLabel(sample, store) {
@@ -1366,8 +1324,9 @@ function qcSampleLabel(sample, store) {
   }
   const batch = store.batches.find(b => b.id === sample.batch_id);
   const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
+  const loc = sample.location_id ? store.qcLocations.find(l => l.id === sample.location_id) : null;
   const prefix = sample.sample_type === 'in_process' ? 'In-process · ' : '';
-  return batch ? `${prefix}${batch.batch_number}${sku ? ' · ' + sku.name : ''}` : 'Unknown batch';
+  return batch ? `${prefix}${batch.batch_number}${sku ? ' · ' + sku.name : ''}${loc ? ' · ' + loc.name : ''}` : 'Unknown batch';
 }
 
 function LogQcSampleModal({ store, onClose }) {
@@ -1389,7 +1348,7 @@ function LogQcSampleModal({ store, onClose }) {
       await store.addQcSample({
         sampleType,
         batchId: sampleType !== 'environmental' ? batchId : null,
-        locationId: sampleType === 'environmental' ? locationId : null,
+        locationId: (sampleType === 'environmental' || sampleType === 'in_process') ? (locationId || null) : null,
         notes,
       });
       setDone(true);
@@ -1436,15 +1395,25 @@ function LogQcSampleModal({ store, onClose }) {
                 </select>
               </Field>
             ) : (
-              <Field label="Batch">
-                <select style={inputStyle} value={batchId} onChange={e => setBatchId(e.target.value)}>
-                  <option value="">Select a batch…</option>
-                  {sortedBatches.map(b => {
-                    const sku = store.skus.find(s => s.id === b.sku_id);
-                    return <option key={b.id} value={b.id}>{b.batch_number}{sku ? ` — ${sku.name}` : ''}</option>;
-                  })}
-                </select>
-              </Field>
+              <>
+                <Field label="Batch">
+                  <select style={inputStyle} value={batchId} onChange={e => setBatchId(e.target.value)}>
+                    <option value="">Select a batch…</option>
+                    {sortedBatches.map(b => {
+                      const sku = store.skus.find(s => s.id === b.sku_id);
+                      return <option key={b.id} value={b.id}>{b.batch_number}{sku ? ` — ${sku.name}` : ''}</option>;
+                    })}
+                  </select>
+                </Field>
+                {sampleType === 'in_process' && (
+                  <Field label="Location (optional) — where in the process">
+                    <select style={inputStyle} value={locationId} onChange={e => setLocationId(e.target.value)}>
+                      <option value="">Not specified</option>
+                      {activeLocations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    </select>
+                  </Field>
+                )}
+              </>
             )}
             <Field label="Notes (optional)">
               <textarea style={{ ...inputStyle, minHeight: 60, fontFamily: 'var(--font-body)' }} value={notes} onChange={e => setNotes(e.target.value)} />
@@ -1467,6 +1436,7 @@ function QcTestRow({ test, sample, store }) {
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const submit = async () => {
     setBusy(true); setError('');
@@ -1480,6 +1450,18 @@ function QcTestRow({ test, sample, store }) {
     }
   };
 
+  const handleDeleteSample = async () => {
+    if (!window.confirm('Delete this sample and both its tests? This cannot be undone.')) return;
+    setDeleting(true);
+    try {
+      await store.deleteQcSample(sample.id);
+    } catch (e) {
+      alert(e.message || 'Could not delete — try again.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 8, padding: '12px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1489,14 +1471,17 @@ function QcTestRow({ test, sample, store }) {
             {QC_TEST_LABELS[test.test_type]} · due {test.due_date}
           </p>
         </div>
-        {test.result === 'pending' ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Pill tone="warn">Pending</Pill>
-            <Button variant="ghost" onClick={() => setLogging(v => !v)} style={{ fontSize: 12.5, padding: '7px 12px' }}>Log read</Button>
-          </div>
-        ) : (
-          <Pill tone={test.result === 'negative' ? 'good' : 'bad'}>{test.result === 'negative' ? 'Negative' : 'Positive'}</Pill>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {test.result === 'pending' ? (
+            <>
+              <Pill tone="warn">Pending</Pill>
+              <Button variant="ghost" onClick={() => setLogging(v => !v)} style={{ fontSize: 12.5, padding: '7px 12px' }}>Log read</Button>
+            </>
+          ) : (
+            <Pill tone={test.result === 'negative' ? 'good' : 'bad'}>{test.result === 'negative' ? 'Negative' : 'Positive'}</Pill>
+          )}
+          <Button variant="danger" onClick={handleDeleteSample} disabled={deleting} style={{ fontSize: 11, padding: '6px 8px' }}><X size={12} /></Button>
+        </div>
       </div>
 
       {logging && (
@@ -1594,8 +1579,6 @@ function QcView({ store }) {
   const today = todayISO();
   const overdue = rows.filter(r => r.result === 'pending' && r.due_date < today);
   const dueSoon = rows.filter(r => r.result === 'pending' && r.due_date >= today && daysBetween(today, r.due_date) <= 2);
-  const upcoming = rows.filter(r => r.result === 'pending' && daysBetween(today, r.due_date) > 2);
-  const recentlyRead = rows.filter(r => r.result !== 'pending').sort((a, b) => b.due_date.localeCompare(a.due_date)).slice(0, 20);
 
   const Group = ({ title, items }) => items.length > 0 && (
     <div style={{ marginBottom: 22 }}>
@@ -1610,28 +1593,198 @@ function QcView({ store }) {
     <div>
       <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
-          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>QC / Micro testing</h3>
+          <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Log Sample</h3>
           <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: 0 }}>FastOrange Wild Yeast + B Tube reads, due {QC_READ_DAYS} days after a sample is pulled.</p>
         </div>
         <Button onClick={() => setShowLogModal(true)}><Plus size={15} /> Log sample</Button>
       </div>
 
-      {rows.length === 0 && <p style={{ color: 'var(--text-muted)' }}>No samples logged yet.</p>}
+      {overdue.length === 0 && dueSoon.length === 0 && <p style={{ color: 'var(--text-muted)' }}>Nothing needs urgent attention right now — check Incubating for everything still pending.</p>}
       <Group title="Overdue" items={overdue} />
       <Group title="Due within 2 days" items={dueSoon} />
-      <Group title="Upcoming" items={upcoming} />
-      <Group title="Recently read" items={recentlyRead} />
-
-      <QcLocationsAdmin store={store} />
 
       {showLogModal && <LogQcSampleModal store={store} onClose={() => setShowLogModal(false)} />}
     </div>
   );
 }
 
-// ============================================================
-// Batches
-// ============================================================
+function TestTubeIcon({ status }) {
+  const fill = status === 'overdue' ? 'var(--bad)' : status === 'soon' ? 'var(--accent)' : 'var(--teal)';
+  return (
+    <svg width="30" height="64" viewBox="0 0 30 64">
+      <rect x="7" y="2" width="16" height="6" rx="2" fill="var(--line)" />
+      <path d="M9 8 L9 46 A6 6 0 0 0 21 46 L21 8" fill="none" stroke="var(--line)" strokeWidth="2" strokeLinecap="round" />
+      <path d="M9.5 24 L9.5 46 A5.5 5.5 0 0 0 20.5 46 L20.5 24 Z" fill={fill} opacity="0.85" />
+    </svg>
+  );
+}
+
+function IncubatingView({ store }) {
+  const pending = useMemo(() => {
+    return store.qcTests
+      .filter(t => t.result === 'pending')
+      .map(t => {
+        const sample = store.qcSamples.find(s => s.id === t.sample_id);
+        return sample ? { ...t, sample } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.due_date.localeCompare(b.due_date));
+  }, [store.qcTests, store.qcSamples]);
+
+  const today = todayISO();
+  const statusFor = (dueDate) => {
+    const days = daysBetween(today, dueDate);
+    if (days < 0) return 'overdue';
+    if (days <= 2) return 'soon';
+    return 'upcoming';
+  };
+
+  const handleDelete = async (sampleId) => {
+    if (!window.confirm('Delete this sample and both its tests? This cannot be undone.')) return;
+    try {
+      await store.deleteQcSample(sampleId);
+    } catch (e) {
+      alert(e.message || 'Could not delete — try again.');
+    }
+  };
+
+  return (
+    <div>
+      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Incubating</h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: '0 0 24px' }}>Every FastOrange read still pending, at a glance.</p>
+      {pending.length === 0 ? (
+        <p style={{ color: 'var(--text-muted)' }}>Nothing incubating right now.</p>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 22 }}>
+          {pending.map(t => {
+            const status = statusFor(t.due_date);
+            const days = daysBetween(today, t.due_date);
+            return (
+              <div key={t.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 130, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 10, padding: '14px 10px 10px' }}>
+                <TestTubeIcon status={status} />
+                <p style={{ margin: '8px 0 0', fontSize: 12, fontWeight: 600, textAlign: 'center', lineHeight: 1.3 }}>{qcSampleLabel(t.sample, store)}</p>
+                <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--text-muted)', textAlign: 'center' }}>{QC_TEST_LABELS[t.test_type]}</p>
+                <p style={{ margin: '2px 0 8px', fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700, color: status === 'overdue' ? 'var(--bad)' : status === 'soon' ? 'var(--accent)' : 'var(--text-faint)' }}>
+                  {days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? 'due today' : `${days}d left`}
+                </p>
+                <Button variant="danger" onClick={() => handleDelete(t.sample.id)} style={{ fontSize: 10.5, padding: '4px 8px' }}><X size={11} /></Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function exportQcResultsCSV(store) {
+  const rows = store.qcTests
+    .slice()
+    .sort((a, b) => (a.due_date || '').localeCompare(b.due_date || ''))
+    .map(t => {
+      const sample = store.qcSamples.find(s => s.id === t.sample_id);
+      return {
+        'Sample Type': sample ? sample.sample_type : '',
+        Sample: qcSampleLabel(sample, store),
+        'Pulled Date': sample ? sample.pulled_date : '',
+        'Pulled By': sample ? store.profileName(sample.pulled_by) : '',
+        'Test Type': QC_TEST_LABELS[t.test_type] || t.test_type,
+        'Due Date': t.due_date,
+        Result: t.result,
+        'Read Date': t.read_date || '',
+        'Read By': t.read_by ? store.profileName(t.read_by) : '',
+        Notes: t.notes || '',
+      };
+    });
+  const csv = Papa.unparse(rows);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `qc-results-export-${todayISO()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function QcDashboard({ store }) {
+  const allTests = store.qcTests;
+  const pending = allTests.filter(t => t.result === 'pending').length;
+  const positive = allTests.filter(t => t.result === 'positive').length;
+  const today = todayISO();
+  const overdue = allTests.filter(t => t.result === 'pending' && t.due_date < today).length;
+
+  const bySampleType = useMemo(() => {
+    const counts = { batch: 0, in_process: 0, environmental: 0 };
+    store.qcSamples.forEach(s => { if (counts[s.sample_type] != null) counts[s.sample_type]++; });
+    return counts;
+  }, [store.qcSamples]);
+
+  const recentPositives = useMemo(() => {
+    return allTests
+      .filter(t => t.result === 'positive')
+      .sort((a, b) => (b.read_date || '').localeCompare(a.read_date || ''))
+      .slice(0, 10)
+      .map(t => ({ ...t, sample: store.qcSamples.find(s => s.id === t.sample_id) }));
+  }, [allTests, store.qcSamples]);
+
+  const stat = (label, value, tone) => (
+    <Card style={{ flex: 1 }}>
+      <p style={{ margin: '0 0 6px', fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</p>
+      <p style={{ margin: 0, fontSize: 30, fontFamily: 'var(--font-display)', color: tone || 'var(--text)' }}>{value}</p>
+    </Card>
+  );
+
+  return (
+    <div>
+      <div className="header-row-stack" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: 0 }}>QC Dashboard</h3>
+        <Button variant="ghost" onClick={() => exportQcResultsCSV(store)} disabled={store.qcTests.length === 0}>
+          <Upload size={15} style={{ transform: 'rotate(180deg)' }} /> Export results (CSV)
+        </Button>
+      </div>
+      <div className="dashboard-stats" style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
+        {stat('Samples logged', store.qcSamples.length)}
+        {stat('Tests pending', pending)}
+        {stat('Overdue', overdue, overdue > 0 ? 'var(--bad)' : 'var(--good)')}
+        {stat('Positive results', positive, positive > 0 ? 'var(--bad)' : 'var(--good)')}
+      </div>
+      <Card style={{ marginBottom: 20 }}>
+        <p style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Samples by source</p>
+        <div style={{ display: 'flex', gap: 24 }}>
+          <span style={{ fontSize: 13.5 }}><strong>{bySampleType.batch}</strong> packaged batch</span>
+          <span style={{ fontSize: 13.5 }}><strong>{bySampleType.in_process}</strong> in-process</span>
+          <span style={{ fontSize: 13.5 }}><strong>{bySampleType.environmental}</strong> environmental</span>
+        </div>
+      </Card>
+      <Card>
+        <p style={{ margin: '0 0 14px', fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>Recent positive results</p>
+        {recentPositives.length === 0 ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: 13.5 }}>No positives logged — clean record so far.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {recentPositives.map(t => (
+              <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--line)', paddingBottom: 6 }}>
+                <span style={{ fontSize: 13 }}>{qcSampleLabel(t.sample, store)} <span style={{ color: 'var(--text-faint)' }}>· {QC_TEST_LABELS[t.test_type]}</span></span>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{t.read_date}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function QcLocationsTab({ store }) {
+  return (
+    <div>
+      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 22, margin: '0 0 4px' }}>Locations</h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: 13.5, margin: '0 0 20px' }}>Environmental sampling points and in-process sampling locations.</p>
+      <QcLocationsAdmin store={store} />
+    </div>
+  );
+}
+
 function ImportBatchesModal({ store, onClose }) {
   const [rawText, setRawText] = useState('');
   const [error, setError] = useState('');
@@ -2172,9 +2325,6 @@ function BatchesView({ store, isLead }) {
   );
 }
 
-// ============================================================
-// SKU / TTT profiles
-// ============================================================
 function SkuEditor({ sku, onCancel, onSave, busy }) {
   const [s, setS] = useState({ ...sku, target: normalizeTarget(sku.target) });
   const [activeSection, setActiveSection] = useState('aroma');
@@ -2278,9 +2428,6 @@ function SkuProfiles({ store, isLead }) {
   );
 }
 
-// ============================================================
-// Dashboard
-// ============================================================
 function exportSessionsCSV(store) {
   const traitLabelsAroma = traitLabelsFor('aroma');
   const traitLabelsFlavor = traitLabelsFor('flavor');
@@ -2653,7 +2800,7 @@ function computeTasterCalibration(store) {
   const tasterStats = {};
 
   Object.values(groups).forEach(group => {
-    if (group.length < 2) return; // need 2+ tasters on the same batch to compare
+    if (group.length < 2) return;
 
     ['aroma', 'flavor'].forEach(section => {
       TRAIT_TAXONOMY[section].forEach(g => g.traits.forEach(t => {
@@ -2672,7 +2819,7 @@ function computeTasterCalibration(store) {
     });
   });
 
-  const MIN_SAMPLE = 20; // roughly one full overlapping tasting's worth of traits
+  const MIN_SAMPLE = 20;
   return Object.entries(tasterStats)
     .map(([tasterId, s]) => ({
       tasterId,
@@ -2805,9 +2952,6 @@ function Dashboard({ store, onEditSession }) {
   );
 }
 
-// ============================================================
-// Root app
-// ============================================================
 export default function App() {
   const [session, setSession] = useState(undefined);
   const [profile, setProfile] = useState(null);
@@ -2847,11 +2991,14 @@ export default function App() {
     { id: 'team', label: 'Team', icon: UserCog, allowed: isLead },
   ];
   const qcTabs = [
-    { id: 'qc', label: 'QC / Micro', icon: FlaskConical, allowed: isLead },
+    { id: 'qc', label: 'Log Sample', icon: FlaskConical, allowed: isLead },
+    { id: 'incubating', label: 'Incubating', icon: TrendingUp, allowed: isLead },
+    { id: 'qcDashboard', label: 'Dashboard', icon: LayoutDashboard, allowed: isLead },
+    { id: 'qcLocations', label: 'Locations', icon: MapPin, allowed: isLead },
   ];
   const tabs = (appMode === 'qc' ? qcTabs : sensoryTabs).filter(t => t.allowed);
 
-  useEffect(() => { if (!tabs.find(t => t.id === tab)) setTab('panels'); }, [isLead]);
+  useEffect(() => { if (!tabs.find(t => t.id === tab)) setTab(appMode === 'qc' ? 'qc' : 'panels'); }, [isLead, appMode]);
 
   const themeVars = {
     '--bg': '#F2EDE2', '--surface': '#FFFFFF', '--surface-2': '#ECE3D1', '--line': '#DDD2BA',
@@ -2924,7 +3071,12 @@ export default function App() {
           {isLead ? (
             <select
               value={appMode}
-              onChange={e => { const m = e.target.value; setAppMode(m); setTab(m === 'qc' ? 'qc' : 'sessions'); setPresetBatchId(null); setPresetTastingType(null); setActivePanelId(null); setEditingSession(null); }}
+              onChange={e => {
+                const m = e.target.value;
+                setAppMode(m);
+                setTab(m === 'qc' ? 'qc' : 'sessions');
+                setPresetBatchId(null); setPresetTastingType(null); setActivePanelId(null); setEditingSession(null);
+              }}
               style={{
                 background: 'transparent', border: 'none', color: 'rgba(242,237,226,0.85)',
                 fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: 0.8, textTransform: 'uppercase',
@@ -2979,6 +3131,9 @@ export default function App() {
           {tab === 'brite' && <PackagingSignOffView store={store} currentProfile={profile} />}
           {tab === 'retention' && isLead && <RetentionQueue store={store} onLogTasting={(bid, type) => { setPresetBatchId(bid); setPresetTastingType(type || null); setActivePanelId(null); setTab('submit'); }} />}
           {tab === 'qc' && isLead && <QcView store={store} />}
+          {tab === 'incubating' && isLead && <IncubatingView store={store} />}
+          {tab === 'qcDashboard' && isLead && <QcDashboard store={store} />}
+          {tab === 'qcLocations' && isLead && <QcLocationsTab store={store} />}
           {tab === 'batches' && isLead && <BatchesView store={store} isLead={isLead} />}
           {tab === 'skus' && <SkuProfiles store={store} isLead={isLead} />}
           {tab === 'search' && <SearchView store={store} />}
