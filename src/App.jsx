@@ -1058,6 +1058,9 @@ function SessionCard({ sess, store, isLead, currentProfile, onLogTasting }) {
   const progress = computeSessionProgress(sess, store);
   const [expanded, setExpanded] = useState(!isLead);
   const [showResults, setShowResults] = useState(false);
+  const [editingParticipants, setEditingParticipants] = useState(false);
+  const [draftParticipantIds, setDraftParticipantIds] = useState([]);
+  const [savingParticipants, setSavingParticipants] = useState(false);
 
   const handleDelete = async () => {
     if (!window.confirm(`Delete "${sess.label}"? This does not affect the underlying panels, batches, or tastings.`)) return;
@@ -1065,6 +1068,26 @@ function SessionCard({ sess, store, isLead, currentProfile, onLogTasting }) {
       await store.deleteSensorySession(sess.id);
     } catch (e) {
       alert(e.message || 'Could not delete — try again.');
+    }
+  };
+
+  const startEditingParticipants = () => {
+    setDraftParticipantIds(progress.participantIds);
+    setEditingParticipants(true);
+  };
+
+  const toggleDraftParticipant = (id) => setDraftParticipantIds(prev =>
+    prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  const saveParticipants = async () => {
+    setSavingParticipants(true);
+    try {
+      await store.updateSessionParticipants(sess.id, draftParticipantIds);
+      setEditingParticipants(false);
+    } catch (e) {
+      alert(e.message || 'Could not update — try again.');
+    } finally {
+      setSavingParticipants(false);
     }
   };
 
@@ -1090,13 +1113,35 @@ function SessionCard({ sess, store, isLead, currentProfile, onLogTasting }) {
       </div>
 
       {isLead && (
-        <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: expanded ? 12 : 0 }}>
-          Participants: {progress.participantIds.length > 0 ? progress.participantIds.map(uid => store.profileName(uid)).join(', ') : 'none assigned'}
-        </p>
+        editingParticipants ? (
+          <div style={{ background: 'var(--surface-2)', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+            <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Assigned staff</p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+              {store.profiles.map(p => (
+                <button key={p.id} type="button" onClick={() => toggleDraftParticipant(p.id)} style={{
+                  fontSize: 12, padding: '6px 10px', borderRadius: 20, cursor: 'pointer',
+                  border: `1px solid ${draftParticipantIds.includes(p.id) ? 'var(--accent)' : 'var(--line)'}`,
+                  background: draftParticipantIds.includes(p.id) ? 'rgba(243,112,58,0.16)' : 'transparent',
+                  color: draftParticipantIds.includes(p.id) ? 'var(--accent)' : 'var(--text-muted)',
+                }}>{p.name}</button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button onClick={saveParticipants} disabled={savingParticipants} style={{ fontSize: 12, padding: '6px 10px' }}>{savingParticipants ? 'Saving…' : 'Save'}</Button>
+              <Button variant="ghost" onClick={() => setEditingParticipants(false)} style={{ fontSize: 12, padding: '6px 10px' }}>Cancel</Button>
+            </div>
+          </div>
+        ) : (
+          <p style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: expanded ? 12 : 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            Participants: {progress.participantIds.length > 0 ? progress.participantIds.map(uid => store.profileName(uid)).join(', ') : 'none assigned'}
+            <Button variant="ghost" onClick={startEditingParticipants} style={{ fontSize: 11, padding: '3px 8px' }}>Edit</Button>
+          </p>
+        )
       )}
 
       {sess.status !== 'complete' && expanded && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+
           {progress.batchEntries.map(be => {
             const batch = store.batches.find(b => b.id === be.batchId);
             const sku = batch ? store.skus.find(s => s.id === batch.sku_id) : null;
