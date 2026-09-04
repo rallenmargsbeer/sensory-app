@@ -306,6 +306,18 @@ function useSupabaseData(session) {
     await loadAll();
   };
 
+  const updateSessionParticipants = async (sensorySessionId, participantIds) => {
+    const { error: delErr } = await supabase.from('sensory_session_participants').delete().eq('sensory_session_id', sensorySessionId);
+    if (delErr) throw delErr;
+    if (participantIds.length > 0) {
+      const { error: insErr } = await supabase.from('sensory_session_participants').insert(
+        participantIds.map(uid => ({ sensory_session_id: sensorySessionId, user_id: uid }))
+      );
+      if (insErr) throw insErr;
+    }
+    await loadAll();
+  };
+
   const updateProfileRole = async (profileId, role) => {
     const { error } = await supabase.from('profiles').update({ role }).eq('id', profileId);
     if (error) throw error;
@@ -358,7 +370,7 @@ function useSupabaseData(session) {
     sensorySessions, sensorySessionPanels, sensorySessionParticipants, qcLocations, qcSamples, qcTests,
     loading, initialLoadDone, error, reload: loadAll,
     addSku, updateSku, addBatch, addSession, updateSession, deleteSession, createPanel, deletePanel, importBatches, addBriteCheck,
-    createSensorySession, deleteSensorySession, updateProfileRole,
+    createSensorySession, deleteSensorySession, updateSessionParticipants, updateProfileRole,
     addQcSample, logQcResult, addQcLocation, updateQcLocation, deleteQcSample,
   };
 }
